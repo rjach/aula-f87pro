@@ -1,266 +1,192 @@
-# Aula F 87 Pro CLI Controller
+# Aula F87 Pro Lighting
 
-> **Personal keyboard lighting customization.** This is my personal fork of [Ahorts/aula-f87pro](https://github.com/Ahorts/aula-f87pro), extended with themes, reactive lighting, and a macOS HID backend for my own Aula F87 Pro setup.
-## UPDATE
-This project may no longer be needed since the functionalities offered by this project have now be added to openRGB. 
+My personal lighting setup for the Aula F87 Pro keyboard: animated per-key
+themes, lighting that reacts to keystrokes, and a shell helper that keeps a
+theme running in the background on macOS.
 
-## DISCLAIMER
-**THIS PROJECT DOES NOT REVERSE ENGINEER THE COMPLETE COMMUNICATION PROTOCOL OF THE AULA F87 PRO KEYBOARD. IT IS A SIMPLE SCRIPT DESIGNED TO SEND RGB DATA TO THE KEYBOARD FOR LIGHTING CONTROL. CURRENTLY, THIS SCRIPT HAS NO CAPABILITY TO SAVE CONFIGURATIONS ON THE KEYBOARD ITSELF; ALL EFFECTS ARE APPLIED IN REAL-TIME VIA SOFTWARE.**
+This is a fork of [Ahorts/aula-f87pro](https://github.com/Ahorts/aula-f87pro),
+a small CLI for sending RGB data to the F87 Pro. The original handles solid
+colours, breathing, and pywal sync on Linux. This fork adds:
 
-A command-line interface (CLI) tool to control the RGB lighting of the Aula F87 Pro keyboard on **Linux and macOS**.
+- 14 animated themes, each computed per key from its real position on the board
+- `--reactive`, which lights up a ripple from each key you press (macOS)
+- macOS support through `hidapi`, with the Input Monitoring setup documented
+- `--preview`, which draws any theme in your terminal so you don't need the keyboard
+- `--brightness`, and a `useKeyTheme` zsh helper plus a launchd agent to keep a theme running
 
-## Limitations
+> **Heads-up:** OpenRGB now supports the F87 Pro. If you only want basic
+> lighting control, use that. This repo is for the custom effects.
 
-*   **Wired Mode Only:** Currently, this tool has only been confirmed to work with the Aula F87 Pro keyboard when connected via a USB cable (wired mode). Efforts to control RGB lighting in wireless mode (e.g., 2.4GHz or Bluetooth) have so far been unsuccessful.
+## How it works
 
-## Features
+The keyboard stores no lighting of its own. Every effect is computed on the
+computer and streamed to the board over USB, so **the lights only change while
+the process is running**. That's why themes run until you press Ctrl+C, and why
+there's a helper to run them in the background.
 
-*   **Animated per-key themes** (`aurora`, `nebula`, `tide`, `ember`, `spectrum`, `dusk`).
-*   **Terminal preview** of any theme, so you can pick one without the keyboard attached.
-*   Set solid colors for all LEDs.
-*   Apply a breathing light effect.
-*   Turn off all keyboard lights.
-*   Run a test sequence to check RGB functionality.
-*   Automatically find and save the correct HID interface for RGB control.
-*   Manage configuration via `~/.aula_f87_config.json`.
-*   Parse color inputs in various formats (named colors, hex codes, RGB strings).
-*   List available predefined color names.
-*   **Pywal integration** - sync keyboard colors with your terminal/wallpaper color scheme.
-*   Adjustable theme brightness (`--brightness 1-100`).
+It only works in **wired mode**. Controlling the lights over 2.4 GHz or
+Bluetooth hasn't worked so far.
 
-## Typical Use Cases
+## Install
 
-1.   **Dynamic Desktop Color Sync:** Use this CLI tool as a backend for a separate script that monitors your desktop environment's dominant colors (e.g., from your wallpaper or active window). The external script can then call `aula-f87pro --color <detected_color>` to dynamically update your keyboard lighting to match your desktop theme.
+Requires Python 3.9+.
 
-2.   **Custom Lighting Effects:** While this tool provides basic effects like solid color and breathing, it can serve as a foundation for more complex custom lighting patterns. If the built-in effects aren't sufficient, you can create your own scripts that repeatedly call `aula-f87pro` with different color arguments in sequence or create new functions to generate unique animations. This will require some programming and tinkering on your part.
+```bash
+git clone https://github.com/rjach/aula-f87pro.git
+cd aula-f87pro
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
 
-## Installation
+### macOS
 
-1.  **Prerequisites:**
-    *   Python 3.9 or higher
-    *   `pip` (Python package installer)
-    *   `libhidapi-hidraw0` (or equivalent for your distribution) for `hidapi` to work.
-        ```bash
-        sudo apt-get update
-        sudo apt-get install libhidapi-hidraw0
-        ```
+```bash
+brew install hidapi
+```
 
-2.  **Clone the repository (if you haven't already):**
-    ```bash
-    git clone https://github.com/Ahorts/aula-f87pro.git
-    cd aula-f87pro
-    ```
+macOS won't let any process open the keyboard's HID interface until the app
+running it has **Input Monitoring** permission. Without it you get `open failed`.
 
-3.  **Install the CLI tool:**
-    It's recommended to install in a virtual environment.
-    ```bash
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install .
-    ```
-    Alternatively, for an editable install (changes in code are reflected immediately):
-    ```bash
-    pip install -e .
-    ```
+1. Go to **System Settings → Privacy & Security → Input Monitoring**.
+2. Turn it on for your terminal (Terminal, iTerm2, Ghostty, WezTerm, VS Code…).
+   Use `+` to add the terminal if it isn't listed.
+3. **Quit the terminal completely and reopen it.** The permission only applies
+   after a fresh launch.
 
-### Alternative Installation for Global Access
+`--reactive` needs the same permission, because it listens for which keys are
+pressed. It only uses each key's position. Nothing you type is recorded.
 
-If you intend to call `aula-f87pro` from other scripts or want it available globally without activating a virtual environment:
+### Linux
 
-*   **Using `pipx` (Recommended for user-level global tools):**
+Install `libhidapi-hidraw0` (or your distro's equivalent). To run without
+`sudo`, add a udev rule:
 
-    1.  **Install `pipx`:**
-        *   On many systems, especially those that manage Python packages strictly (like Arch Linux, recent Debian/Ubuntu versions), you should install `pipx` using your system's package manager to avoid "externally managed environment" errors.
+```bash
+echo 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="010c", MODE="0666"' \
+  | sudo tee /etc/udev/rules.d/99-aula-f87pro.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
 
-            *   For Arch Linux:
+Then unplug the keyboard and plug it back in. For a tighter setup, use
+`GROUP="plugdev"` and `MODE="0660"`.
 
-                ```bash
-                sudo pacman -S python-pipx
-                ```
+### First run
 
-            *   For Debian/Ubuntu (if available in repositories, check your version):
-                ```bash
-                sudo apt install pipx
-                ```
+Find and save the HID interface that controls the lights:
 
-            *   If your distribution doesn't package `pipx` or the above methods don't work, you might try the official bootstrap method, but prefer your system package manager if possible:
-
-                ```bash
-                python3 -m pip install --user pipx
-                ```
-
-        *   After installing `pipx`, ensure its scripts directory is in your PATH:
-            ```bash
-            python3 -m pipx ensurepath
-            ```
-            You may need to open a new terminal or re-login for this change to take effect.
-    2.  **Install `aula-f87pro` with `pipx`:**
-        From the `aula-f87pro` project directory:
-        ```bash
-        pipx install .
-        ```
-        This installs `aula-f87pro` in an isolated environment but makes the command available in your user's PATH.
-
-*   **System-Wide Installation (Use with caution):**
-    ```bash
-    sudo pip install .
-    ```
-    This makes `aula-f87pro` available to all users but installs it into the system Python environment. This is generally discouraged on systems with "externally managed" Python environments as it might conflict with the system package manager or lead to an inconsistent state. Prefer `pipx` or virtual environments.
-
-##
-## Udev Rules for Non-Root Access (Linux)
-
-To use this tool without `sudo`, you need to set up udev rules to grant your user permission to access the keyboard's HID interface.
-
-1.  Create a new udev rule file (replace nano with your editor of choice):
-    ```bash
-    sudo nano /etc/udev/rules.d/99-aula-f87pro.rules
-    ```
-
-2.  Add the following line to the file:
-    ```
-    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="258a", ATTRS{idProduct}=="010c", MODE="0666"
-    ```
-    *Note: `MODE="0666"` grants access to all users. For a more secure setup, you can use `GROUP="plugdev"` (or another group your user belongs to) and `MODE="0660"`.*
-
-3.  Save the file and exit the editor.
-
-4.  Reload the udev rules and trigger them:
-    ```bash
-    sudo udevadm control --reload-rules
-    sudo udevadm trigger
-    ```
-
-5.  Unplug and replug your Aula F87 Pro keyboard.
-
-
-* NOTE: If all else fails, you can add a NOPASSWD rule for script execution
-
-## Usage
-
-The primary command is `aula-f87pro`.
-
-**First-time Setup (Finding the Interface):**
 ```bash
 aula-f87pro --find-interface
 ```
 
-**Basic Usage:**
-```bash
-aula-f87pro --color red              # Set solid color
-aula-f87pro --color "#FF6600"        # Hex color
-aula-f87pro --breathing blue         # Breathing effect
-aula-f87pro --off                    # Turn off
-aula-f87pro --test                   # Test sequence
-aula-f87pro --theme aurora           # Animated theme
-aula-f87pro --list-themes            # See all themes
-```
-
-
 ## Themes
-
-Animated, per-key lighting patterns. Every theme is computed on the host and
-streamed to the board, so a theme lasts only as long as the command runs.
 
 ```bash
 aula-f87pro --list-themes
+aula-f87pro --theme                        # default theme (flow)
 aula-f87pro --theme aurora                 # runs until Ctrl+C
-aula-f87pro --theme dusk --brightness 60   # dimmer, low glare
-aula-f87pro --theme tide --duration 30     # stop after 30s and turn off
+aula-f87pro --theme dusk --brightness 60   # dimmer
+aula-f87pro --theme tide --duration 30     # stop after 30 seconds
+aula-f87pro --theme reactor --reactive     # reacts to typing (macOS)
+aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard needed
 ```
 
-| Theme      | Look |
-| ---------- | ---- |
-| `supernova` | Spinning prismatic galaxy: spiral arms wheel around the board while shockwaves burst from a white-hot core. |
-| `reactor`  | Hyperactive plasma that fires its own sparks and rings several times a second, so it never sits still. With `--reactive`, each keystroke throws a board-wide shockwave and typing speeds up and brightens the plasma. |
-| `rojan`    | **ROJAN** in still neon pixel letters; every other key stays unlit. With `--reactive`, keystroke bubbles are the only thing that moves. |
-| `aurora`   | Slow northern-lights ribbons: teal, mint, cyan and violet. **Default.** |
-| `nebula`   | Magenta and indigo clouds with drifting starlight. |
-| `tide`     | Ocean swell rolling across the board in deep blue and cyan. |
-| `ember`    | Warm coals rising from the bottom row into cooling smoke. |
-| `spectrum` | Smooth full-hue rainbow sweeping diagonally. |
-| `dusk`     | Still sunset gradient. Static, low glare, good for long sessions. |
+| Theme       | Look |
+| ----------- | ---- |
+| `flow`      | A different colour on each key, flowing across the board. **Default.** |
+| `aurora`    | Northern-lights ribbons in teal, cyan, and violet. |
+| `nebula`    | Magenta and indigo clouds with drifting starlight. |
+| `tide`      | Ocean swell rolling across the board in deep blue and cyan. |
+| `ember`     | Warm coals rising from the bottom row into cooling smoke. |
+| `inferno`   | Turbulent, white-hot fire rising up the board. |
+| `spectrum`  | A smooth rainbow sweeping diagonally. |
+| `synthwave` | Neon magenta and cyan bands with a bright sweep passing over them. |
+| `matrix`    | Green code rain with bright leading characters. |
+| `voltage`   | White-blue electric arcs across a dark board. |
+| `supernova` | A spinning rainbow galaxy with shockwaves bursting from a white-hot core. |
+| `reactor`   | Plasma that sparks on its own and surges while you type. |
+| `rojan`     | **ROJAN** in neon pixel letters on an unlit board. Pair it with `--reactive`. |
+| `dusk`      | A still sunset gradient. Low glare, good for long sessions. |
 
-### Previewing without the keyboard
+### Reactive mode
 
-`--preview` renders the real key layout in your terminal using 24-bit colour.
-Useful for choosing a theme, and for checking the tool works before sorting out
-device permissions.
+`--reactive` dims the theme into a backdrop, and each keypress sends a ripple
+out from that key. Some themes adjust this: `reactor` hits harder the faster
+you type, and in `rojan` the ripples are the only thing that moves.
+
+## Keeping a theme running
+
+### `useKeyTheme` (zsh)
+
+`scripts/useKeyTheme.zsh` runs one background instance, remembers your theme
+between shells, and replaces the old instance whenever you switch.
 
 ```bash
-aula-f87pro --theme nebula --preview
+# in ~/.zshrc
+export AULA_F87_HOME="$HOME/path/to/aula-f87pro"
+source "$AULA_F87_HOME/scripts/useKeyTheme.zsh"
 ```
 
-### Keeping a theme running
+```bash
+useKeyTheme                   # start the saved theme in reactive mode
+useKeyTheme --theme=nebula    # switch to a theme and save it
+useKeyTheme --list
+useKeyTheme --status
+useKeyTheme --stop            # stop, leaving the lights as they are
+useKeyTheme --off             # stop and turn the lights off
+```
 
-Because the keyboard holds no lighting state, the process has to stay alive.
-Run it in the background:
+### launchd (macOS)
+
+`scripts/com.aula.f87pro.theme.plist` is a launchd agent that starts a theme
+when you log in. The comments at the top of the file explain how to install it.
+
+### Anything else
 
 ```bash
 nohup aula-f87pro --theme aurora --duration 0 >/dev/null 2>&1 &
 ```
 
-On macOS, `scripts/com.aula.f87pro.theme.plist` is a ready launchd agent that
-restores your theme at login; installation notes are in the file's comments.
+## Other commands
 
-## macOS
-
-The tool works on macOS over USB, with one extra step.
-
-### Install
-
-`hidapi` replaces the Linux-only `hidraw` binding:
+These come from the original project and still work:
 
 ```bash
-brew install hidapi
-python3 -m venv .venv
-source .venv/bin/activate
-pip install .
+aula-f87pro --color red                # also "#FF6600" or "255,102,0"
+aula-f87pro --breathing blue --duration 30
+aula-f87pro --off
+aula-f87pro --test
+aula-f87pro --list-colors
+aula-f87pro --show-config              # saved in ~/.aula_f87_config.json
+aula-f87pro --pywal                    # pywal accent colour
+aula-f87pro --pywal gradient --watch   # a different pywal colour on each row, updates when pywal changes
 ```
 
-### Grant Input Monitoring (required, once)
+## Project layout
 
-The F87 Pro advertises a keyboard usage page, so macOS refuses to let *any*
-process open its HID interface until the calling app is trusted. Without this
-you will see `open failed`.
+```
+src/f87pro/
+  cli.py          argument parsing and dispatch
+  device.py       connecting to the keyboard and streaming frames
+  hid_backend.py  picks hidapi or hidraw, macOS permission hints
+  layout.py       physical key positions for all 102 LEDs
+  themes.py       the themes (colour maths only, no hardware access)
+  reactive.py     keypress ripples and the macOS key listener
+  keycodes.py     maps macOS keycodes to LEDs
+  preview.py      terminal preview
+scripts/          useKeyTheme.zsh, launchd agent
+tests/            theme and frame tests
+```
 
-1.  **System Settings -> Privacy & Security -> Input Monitoring**
-2.  Enable the terminal you run the command from (Terminal, iTerm2, Ghostty,
-    WezTerm, VS Code...). Click `+` and add it from `/Applications` if it is
-    not listed.
-3.  **Fully quit and reopen that terminal** - the permission is only picked up
-    on a fresh launch.
-
-Then confirm:
+Themes only turn a key's position and the elapsed time into a colour, so you
+can test and preview them without the keyboard.
 
 ```bash
-aula-f87pro --find-interface
-aula-f87pro --theme aurora
+python -m pytest
 ```
 
-Note that the permission is attached to the terminal *application*, not to this
-tool, so each terminal you use needs it. Udev rules do not apply on macOS.
+## Credits and licence
 
-## Pywal Integration
-
-Sync your keyboard RGB with your pywal color scheme.
-
-**Usage:**
-```bash
-aula-f87pro --pywal                  # Use pywal accent color
-aula-f87pro --pywal gradient         # Each row gets a different pywal color
-```
-
-**Auto-sync with wal command:**
-
-Add this to your `~/.bashrc` or `~/.zshrc`:
-```bash
-wal() {
-    /usr/bin/wal "$@"
-    pkill -f "aula-f87pro" 2>/dev/null
-    nohup /path/to/aula-f87pro/.venv/bin/aula-f87pro --pywal --duration 0 >/dev/null 2>&1 &
-    disown
-}
-```
-
-Now every time you run `wal -i wallpaper.jpg`, your keyboard will automatically update to match.
+The original CLI is by [Ahorts](https://github.com/Ahorts/aula-f87pro).
+This project doesn't implement the keyboard's full protocol. It sends RGB
+frames and can't save settings to the keyboard. MIT licensed, see `LICENCE`.
