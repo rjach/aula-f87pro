@@ -1,4 +1,3 @@
-# filepath: /home/Ahorts/Documents/Projects/aula-f87pro/pyproject.toml
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
@@ -15,13 +14,18 @@ requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License", 
-    "Operating System :: Linux",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
     "Environment :: Console",
     "Topic :: Utilities",
 ]
 dependencies = [
-    "hidapi", 
+    "hidapi",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["f87pro*"]
 
 [project.optional-dependencies]
 watch = ["inotify"]  # For efficient file watching (recommended for --watch mode)

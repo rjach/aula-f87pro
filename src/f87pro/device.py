@@ -1,10 +1,15 @@
-import hidraw as hid
 import time
 import os
-from typing import Optional
+from typing import Optional, Callable
 from .config import ConfigManager
+from .hid_backend import hid, permission_hint, sharing_warning
+from .layout import KEY_POSITIONS as LAYOUT_KEY_POSITIONS, LED_COUNT
+from .themes import Theme, is_static
 
 class AulaF87Pro:
+    #: The board holds no state, so an idle picture must be refreshed.
+    KEEPALIVE_SECONDS = 1.0
+
     VENDOR_ID = 0x258a
     PRODUCT_ID = 0x010c
 
@@ -18,37 +23,8 @@ class AulaF87Pro:
         5,11,17,      35,      53,59,65,      83,89,95,101
     ]
     
-    # Physical key positions for ripple effect calculations (row, col)
-    KEY_POSITIONS = {
-        # Function row
-        0: (0, 0), 12: (0, 1), 18: (0, 2), 24: (0, 3), 30: (0, 4), 36: (0, 5),
-        42: (0, 6), 48: (0, 7), 54: (0, 8), 60: (0, 9), 66: (0, 10), 72: (0, 11),
-        78: (0, 12), 84: (0, 13), 90: (0, 14), 96: (0, 15),
-        
-        # Number row
-        1: (1, 0), 7: (1, 1), 13: (1, 2), 19: (1, 3), 25: (1, 4), 31: (1, 5),
-        37: (1, 6), 43: (1, 7), 49: (1, 8), 55: (1, 9), 61: (1, 10), 67: (1, 11),
-        73: (1, 12), 79: (1, 13), 85: (1, 14), 91: (1, 15), 97: (1, 16),
-        
-        # Tab row
-        2: (2, 0), 8: (2, 1), 14: (2, 2), 20: (2, 3), 26: (2, 4), 32: (2, 5),
-        38: (2, 6), 44: (2, 7), 50: (2, 8), 56: (2, 9), 62: (2, 10), 68: (2, 11),
-        74: (2, 12), 80: (2, 13), 86: (2, 14), 92: (2, 15), 98: (2, 16),
-        
-        # Caps row
-        3: (3, 0), 9: (3, 1), 15: (3, 2), 21: (3, 3), 27: (3, 4), 33: (3, 5),
-        39: (3, 6), 45: (3, 7), 51: (3, 8), 57: (3, 9), 63: (3, 10), 69: (3, 11),
-        81: (3, 12),
-        
-        # Shift row
-        4: (4, 0), 10: (4, 1), 16: (4, 2), 22: (4, 3), 28: (4, 4), 34: (4, 5),
-        40: (4, 6), 46: (4, 7), 52: (4, 8), 58: (4, 9), 64: (4, 10), 82: (4, 11),
-        94: (4, 12),
-        
-        # Bottom row
-        5: (5, 0), 11: (5, 1), 17: (5, 2), 35: (5, 3), 53: (5, 4), 59: (5, 5),
-        65: (5, 6), 83: (5, 7), 89: (5, 8), 95: (5, 9), 101: (5, 10)
-    }
+    # Physical key positions (row, col), sourced from the shared layout module.
+    KEY_POSITIONS = LAYOUT_KEY_POSITIONS
 
     KEY_MAP = {
         # Letters
@@ -76,7 +52,7 @@ class AulaF87Pro:
     def __init__(self):
         self.device = None
         self.device_path = None
-        self.num_leds = 102
+        self.num_leds = LED_COUNT
         self.config_manager = ConfigManager(os.path.expanduser("~/.aula_f87_config.json"))
     
     def auto_find_interface(self) -> Optional[str]:
@@ -91,11 +67,15 @@ class AulaF87Pro:
                 try:
                     temp_device = hid.device()
                     temp_device.open_path(dev_info['path'])
-                    # Test with a simple packet
+                    # Test with a simple packet. Opening is not proof of
+                    # anything: the wrong interface opens happily and then
+                    # rejects the report with -1.
                     packet = [0x06, 0x08, 0x00, 0x00, 0x01, 0x00, 0x7a, 0x01]
                     packet.extend([0] * (520 - len(packet)))
-                    temp_device.send_feature_report(packet)
+                    written = temp_device.send_feature_report(packet)
                     temp_device.close()
+                    if not written or written <= 0:
+                        continue
 
                     path = dev_info['path'].decode('utf-8') if isinstance(dev_info['path'], bytes) else dev_info['path']
                     self.config_manager.set('device_path', path)
@@ -200,16 +180,65 @@ class AulaF87Pro:
             packet = [0x06, 0x08, 0x00, 0x00, 0x01, 0x00, 0x7a, 0x01]
             packet.extend([0] * (self.num_leds * 3))
             packet.extend([0] * (520 - len(packet)))
-            temp_device.send_feature_report(packet)
+            written = temp_device.send_feature_report(packet)
             temp_device.close()
-            
+
+            if not written or written <= 0:
+                print("Saved interface opened but rejected the report; re-detecting.")
+                return False
+
             print("Saved interface verified!")
             return True
         except Exception as e:
             print(f"Saved interface verification failed: {e}")
             return False
 
+    def is_present(self) -> bool:
+        """
+        Whether the keyboard is plugged in, regardless of whether it can be opened.
+
+        @returns True if the OS enumerates the device.
+        """
+        return bool(hid.enumerate(self.VENDOR_ID, self.PRODUCT_ID))
+
+    def can_open_any_interface(self) -> bool:
+        """
+        Whether at least one of the keyboard's interfaces can be opened.
+
+        Enumeration succeeds without any special privileges, but opening does
+        not, so this distinguishes "device unplugged" from "access denied" --
+        and lets us skip the interactive interface scan, which would otherwise
+        prompt once per interface for a failure that is never going to change.
+
+        @returns True if any interface opened successfully.
+        """
+        for dev_info in hid.enumerate(self.VENDOR_ID, self.PRODUCT_ID):
+            try:
+                probe = hid.device()
+                probe.open_path(dev_info['path'])
+                probe.close()
+                return True
+            except Exception:
+                continue
+        return False
+
     def connect(self, force_find: bool = False) -> bool:
+
+        if not self.is_present():
+            print("No Aula F87 Pro found. Connect it over USB -- wireless mode "
+                  "does not expose the RGB interface.")
+            return False
+
+        warning = sharing_warning()
+        if warning:
+            print(warning)
+
+        if not self.can_open_any_interface():
+            print("The keyboard is connected, but the OS refused to open its "
+                  "HID interface.")
+            print()
+            print(permission_hint())
+            return False
 
         if not force_find and not self.device_path:
             saved_path = self.config_manager.get('device_path')
@@ -233,6 +262,8 @@ class AulaF87Pro:
             return True
         except Exception as e:
             print(f"Failed to connect to working interface: {e}")
+            print()
+            print(permission_hint())
             self.device = None
             self.device_path = None
             return False
@@ -482,3 +513,133 @@ class AulaF87Pro:
                 raise
 
         return True
+
+    def render_theme_frame(self, theme: Theme, elapsed: float) -> list:
+        """
+        Build one flat RGB buffer for a theme at a point in time.
+
+        LEDs with no mapped physical position stay dark -- the F87 Pro reports
+        102 LED slots but only 87 of them sit under a key.
+
+        @param theme - The theme to sample.
+        @param elapsed - Seconds since the effect started.
+        @returns A flat [r, g, b, r, g, b, ...] buffer of num_leds * 3 values.
+        """
+        rgb_data = [0] * (self.num_leds * 3)
+        for led_index, (row, column) in self.KEY_POSITIONS.items():
+            if led_index >= self.num_leds:
+                continue
+            red, green, blue = theme.color_at(row, column, elapsed)
+            offset = led_index * 3
+            rgb_data[offset] = red
+            rgb_data[offset + 1] = green
+            rgb_data[offset + 2] = blue
+        return rgb_data
+
+    def run_theme(self, theme: Theme, duration: float = 0.0,
+                  should_stop: Optional[Callable[[], bool]] = None) -> bool:
+        """
+        Play an animated theme on the keyboard.
+
+        The keyboard holds no state of its own, so every frame must be pushed
+        over USB; static themes are re-sent at a slow keep-alive rate instead of
+        the full frame rate.
+
+        @param theme - The theme to play.
+        @param duration - Seconds to run; 0 runs until interrupted.
+        @param should_stop - Optional predicate polled each frame to stop early.
+        @returns True if the theme ran to completion or was asked to stop.
+        """
+        frame_interval = 1.0 / theme.frames_per_second
+        static = is_static(theme)
+        label = "static" if static else f"{theme.frames_per_second} fps"
+        print(f"Device: Playing theme '{theme.name}' ({label}), "
+              f"duration: {'infinite' if duration == 0.0 else str(duration) + 's'}")
+
+        static_frame = self.render_theme_frame(theme, 0.0) if static else None
+        start_time = time.time()
+
+        try:
+            while True:
+                if should_stop and should_stop():
+                    return True
+
+                elapsed = time.time() - start_time
+                if duration != 0.0 and elapsed >= duration:
+                    print(f"Device: Theme duration ({duration}s) ended.")
+                    self.turn_off()
+                    return True
+
+                frame = static_frame if static else self.render_theme_frame(theme, elapsed)
+                if not self.send_rgb(list(frame)):
+                    print("Device Error: Failed to send theme frame. Stopping.")
+                    return False
+
+                time.sleep(frame_interval)
+
+        except KeyboardInterrupt:
+            print(f"\nDevice: Theme '{theme.name}' interrupted by user.")
+            raise
+
+    def run_reactive(self, base_theme: Theme, bubble_field, duration: float = 0.0,
+                     frames_per_second: int = 60,
+                     should_stop: Optional[Callable[[], bool]] = None) -> bool:
+        """
+        Play a moving theme and raise a bubble wherever a key is pressed.
+
+        The base animates underneath while keystroke bubbles are composited on
+        top, so the board is never still and every frame must be sent.
+
+        Themes with a `reactive_surge` are also driven by typing energy: their
+        clock runs faster and their colours brighten while keys are being hit.
+
+        @param base_theme - The moving theme painted underneath.
+        @param bubble_field - A BubbleField fed by a key listener.
+        @param duration - Seconds to run; 0 runs until interrupted.
+        @param frames_per_second - Frame rate for both base and bubbles.
+        @param should_stop - Optional predicate polled each frame to stop early.
+        @returns True when the effect ended cleanly.
+        """
+        frame_interval = 1.0 / frames_per_second
+        print(f"Device: Reactive mode on a moving '{base_theme.name}' base "
+              f"({frames_per_second} fps). Type to raise bubbles.")
+
+        start_time = time.time()
+        surge = getattr(base_theme, "reactive_surge", 0.0)
+        # The theme's own clock. It runs ahead of wall time while typing energy
+        # is high, which speeds the animation up without any jump when the
+        # energy changes.
+        theme_clock = 0.0
+        previous_frame_time = start_time
+
+        try:
+            while True:
+                if should_stop and should_stop():
+                    return True
+
+                now = time.time()
+                elapsed = now - start_time
+
+                if duration != 0.0 and elapsed >= duration:
+                    print(f"Device: Reactive duration ({duration}s) ended.")
+                    self.turn_off()
+                    return True
+
+                drive = 1.0 + surge * bubble_field.energy(now) if surge else 1.0
+                theme_clock += (now - previous_frame_time) * drive
+                previous_frame_time = now
+
+                base_frame = self.render_theme_frame(base_theme, theme_clock)
+                if drive > 1.0:
+                    base_frame = [min(255, int(channel * drive)) for channel in base_frame]
+                frame = bubble_field.render(base_frame, now)
+
+                if not self.send_rgb(list(frame)):
+                    print("Device Error: Failed to send reactive frame. Stopping.")
+                    return False
+
+                time.sleep(frame_interval)
+
+        except KeyboardInterrupt:
+            print("\nDevice: Reactive mode interrupted by user.")
+            raise

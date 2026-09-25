@@ -1,11 +1,13 @@
 # Aula F 87 Pro CLI Controller
+
+> **Personal keyboard lighting customization.** This is my personal fork of [Ahorts/aula-f87pro](https://github.com/Ahorts/aula-f87pro), extended with themes, reactive lighting, and a macOS HID backend for my own Aula F87 Pro setup.
 ## UPDATE
 This project may no longer be needed since the functionalities offered by this project have now be added to openRGB. 
 
 ## DISCLAIMER
 **THIS PROJECT DOES NOT REVERSE ENGINEER THE COMPLETE COMMUNICATION PROTOCOL OF THE AULA F87 PRO KEYBOARD. IT IS A SIMPLE SCRIPT DESIGNED TO SEND RGB DATA TO THE KEYBOARD FOR LIGHTING CONTROL. CURRENTLY, THIS SCRIPT HAS NO CAPABILITY TO SAVE CONFIGURATIONS ON THE KEYBOARD ITSELF; ALL EFFECTS ARE APPLIED IN REAL-TIME VIA SOFTWARE.**
 
-A command-line interface (CLI) tool to control the RGB lighting of the Aula F87 Pro keyboard on Linux.
+A command-line interface (CLI) tool to control the RGB lighting of the Aula F87 Pro keyboard on **Linux and macOS**.
 
 ## Limitations
 
@@ -13,6 +15,8 @@ A command-line interface (CLI) tool to control the RGB lighting of the Aula F87 
 
 ## Features
 
+*   **Animated per-key themes** (`aurora`, `nebula`, `tide`, `ember`, `spectrum`, `dusk`).
+*   **Terminal preview** of any theme, so you can pick one without the keyboard attached.
 *   Set solid colors for all LEDs.
 *   Apply a breathing light effect.
 *   Turn off all keyboard lights.
@@ -22,6 +26,7 @@ A command-line interface (CLI) tool to control the RGB lighting of the Aula F87 
 *   Parse color inputs in various formats (named colors, hex codes, RGB strings).
 *   List available predefined color names.
 *   **Pywal integration** - sync keyboard colors with your terminal/wallpaper color scheme.
+*   Adjustable theme brightness (`--brightness 1-100`).
 
 ## Typical Use Cases
 
@@ -103,7 +108,7 @@ If you intend to call `aula-f87pro` from other scripts or want it available glob
     This makes `aula-f87pro` available to all users but installs it into the system Python environment. This is generally discouraged on systems with "externally managed" Python environments as it might conflict with the system package manager or lead to an inconsistent state. Prefer `pipx` or virtual environments.
 
 ##
-## Udev Rules for Non-Root Access
+## Udev Rules for Non-Root Access (Linux)
 
 To use this tool without `sudo`, you need to set up udev rules to grant your user permission to access the keyboard's HID interface.
 
@@ -147,7 +152,94 @@ aula-f87pro --color "#FF6600"        # Hex color
 aula-f87pro --breathing blue         # Breathing effect
 aula-f87pro --off                    # Turn off
 aula-f87pro --test                   # Test sequence
+aula-f87pro --theme aurora           # Animated theme
+aula-f87pro --list-themes            # See all themes
 ```
+
+
+## Themes
+
+Animated, per-key lighting patterns. Every theme is computed on the host and
+streamed to the board, so a theme lasts only as long as the command runs.
+
+```bash
+aula-f87pro --list-themes
+aula-f87pro --theme aurora                 # runs until Ctrl+C
+aula-f87pro --theme dusk --brightness 60   # dimmer, low glare
+aula-f87pro --theme tide --duration 30     # stop after 30s and turn off
+```
+
+| Theme      | Look |
+| ---------- | ---- |
+| `supernova` | Spinning prismatic galaxy: spiral arms wheel around the board while shockwaves burst from a white-hot core. |
+| `reactor`  | Hyperactive plasma that fires its own sparks and rings several times a second, so it never sits still. With `--reactive`, each keystroke throws a board-wide shockwave and typing speeds up and brightens the plasma. |
+| `rojan`    | **ROJAN** in still neon pixel letters; every other key stays unlit. With `--reactive`, keystroke bubbles are the only thing that moves. |
+| `aurora`   | Slow northern-lights ribbons: teal, mint, cyan and violet. **Default.** |
+| `nebula`   | Magenta and indigo clouds with drifting starlight. |
+| `tide`     | Ocean swell rolling across the board in deep blue and cyan. |
+| `ember`    | Warm coals rising from the bottom row into cooling smoke. |
+| `spectrum` | Smooth full-hue rainbow sweeping diagonally. |
+| `dusk`     | Still sunset gradient. Static, low glare, good for long sessions. |
+
+### Previewing without the keyboard
+
+`--preview` renders the real key layout in your terminal using 24-bit colour.
+Useful for choosing a theme, and for checking the tool works before sorting out
+device permissions.
+
+```bash
+aula-f87pro --theme nebula --preview
+```
+
+### Keeping a theme running
+
+Because the keyboard holds no lighting state, the process has to stay alive.
+Run it in the background:
+
+```bash
+nohup aula-f87pro --theme aurora --duration 0 >/dev/null 2>&1 &
+```
+
+On macOS, `scripts/com.aula.f87pro.theme.plist` is a ready launchd agent that
+restores your theme at login; installation notes are in the file's comments.
+
+## macOS
+
+The tool works on macOS over USB, with one extra step.
+
+### Install
+
+`hidapi` replaces the Linux-only `hidraw` binding:
+
+```bash
+brew install hidapi
+python3 -m venv .venv
+source .venv/bin/activate
+pip install .
+```
+
+### Grant Input Monitoring (required, once)
+
+The F87 Pro advertises a keyboard usage page, so macOS refuses to let *any*
+process open its HID interface until the calling app is trusted. Without this
+you will see `open failed`.
+
+1.  **System Settings -> Privacy & Security -> Input Monitoring**
+2.  Enable the terminal you run the command from (Terminal, iTerm2, Ghostty,
+    WezTerm, VS Code...). Click `+` and add it from `/Applications` if it is
+    not listed.
+3.  **Fully quit and reopen that terminal** - the permission is only picked up
+    on a fresh launch.
+
+Then confirm:
+
+```bash
+aula-f87pro --find-interface
+aula-f87pro --theme aurora
+```
+
+Note that the permission is attached to the terminal *application*, not to this
+tool, so each terminal you use needs it. Udev rules do not apply on macOS.
 
 ## Pywal Integration
 

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent that keeps a theme running on the Aula F87 Pro.
+
+  The keyboard stores no lighting state of its own, so a process has to keep
+  pushing frames for the theme to stay visible.
+
+  Install:
+    sed -e "s|__VENV__|$PWD/.venv|g" scripts/com.aula.f87pro.theme.plist \
+      > ~/Library/LaunchAgents/com.aula.f87pro.theme.plist
+    launchctl load ~/Library/LaunchAgents/com.aula.f87pro.theme.plist
+
+  Note: the agent inherits launchd's Input Monitoring status, not your
+  terminal's. If it cannot open the device, grant the permission to
+  /bin/launchd's session or simply run the command from a granted terminal.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aula.f87pro.theme</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__VENV__/bin/aula-f87pro</string>
+        <string>--theme</string>
+        <string>aurora</string>
+        <string>--brightness</string>
+        <string>85</string>
+        <string>--duration</string>
+        <string>0</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/aula-f87pro.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/aula-f87pro.err.log</string>
+</dict>
+</plist>
