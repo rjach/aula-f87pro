@@ -105,6 +105,7 @@ aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard n
 | `voltage`   | White-blue electric arcs across a dark board. |
 | `supernova` | A spinning rainbow galaxy with shockwaves bursting from a white-hot core. |
 | `reactor`   | Plasma that sparks on its own and surges while you type. |
+| `sandfall`  | Falling sand. Each keypress drops a grain from that key. Grains pile up, and a full bottom row flashes and clears. Pair it with `--reactive`. |
 | `rojan`     | **ROJAN** in neon pixel letters on an unlit board. Pair it with `--reactive`. |
 | `dusk`      | A still sunset gradient. Low glare, good for long sessions. |
 
@@ -113,6 +114,12 @@ aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard n
 `--reactive` dims the theme into a backdrop, and each keypress sends a ripple
 out from that key. Some themes adjust this: `reactor` hits harder the faster
 you type, and in `rojan` the ripples are the only thing that moves.
+
+`sandfall` works differently from the other themes. They all compute each key's
+colour from its position and the time. `sandfall` runs a small simulation with
+its own state, and each keypress becomes an input to it: a grain dropped from
+the key you pressed. The ripples shrink to a small splash so the pile stays
+visible. Without `--reactive`, grains still drift in from the top on their own.
 
 ## Keeping a theme running
 
