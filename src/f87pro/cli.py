@@ -9,6 +9,7 @@ from .pywal import load_wal_colors, WalFileWatcher
 from .themes import THEMES, DEFAULT_THEME, BrightnessAdjusted, get_theme
 from .reactive import BUBBLE_LIFETIME, BUBBLE_MAX_RADIUS, BubbleField, MacOSKeyListener
 from .preview import preview as preview_theme
+from .layout import KEY_POSITIONS
 
 #: --duration is shared by several effects, but themes should run until
 #: interrupted while the older colour effects keep their historic 10s default.
@@ -37,6 +38,7 @@ Examples:
   aula-f87pro --theme aurora       # animated aurora theme (runs until Ctrl+C)
   aula-f87pro --theme dusk --brightness 60
   aula-f87pro --theme aurora --reactive  # flowing base + bubble on each keystroke
+  aula-f87pro --theme sandfall --reactive  # every keystroke drops a grain of sand
   aula-f87pro --theme tide --preview   # preview in the terminal, no hardware
   aula-f87pro --list-themes
   aula-f87pro --pywal              # accent color from pywal
@@ -220,7 +222,13 @@ def main():
                 lifetime=selected_theme.reactive_bubble_lifetime or BUBBLE_LIFETIME,
                 max_radius=selected_theme.reactive_bubble_radius or BUBBLE_MAX_RADIUS,
             )
-            listener = MacOSKeyListener(on_key_led=field.trigger)
+            def on_key_led(led):
+                field.trigger(led)
+                position = KEY_POSITIONS.get(led)
+                if position is not None:
+                    selected_theme.on_key_press(*position)
+
+            listener = MacOSKeyListener(on_key_led=on_key_led)
 
             if not listener.start():
                 print(f"Error: {listener.failure}")
