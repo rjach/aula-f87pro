@@ -99,3 +99,79 @@ def test_brightness_wrapper_forwards_key_presses():
 def test_the_spacebar_shows_all_the_sand_beneath_it():
     from f87pro.simulation import _key_pixels
     assert _key_pixels(5, 3) == (4, 5, 6, 7, 8, 9)
+
+
+# ------------------------------------------------------------------ forge ---
+
+from f87pro.simulation import ForgeTheme
+
+FORGE_STEP = ForgeTheme.step_seconds
+
+
+def _quiet_forge():
+    """A forge whose idle smith never strikes, so presses are isolated."""
+    theme = ForgeTheme()
+    theme._SMITH_INTERVAL = 10_000.0
+    theme.color_at(0, 0, 0.0)
+    theme._next_smith_beat = 10_000.0
+    return theme
+
+
+def test_a_strike_flashes_the_key_and_throws_sparks():
+    theme = _quiet_forge()
+    before = theme.color_at(Q_ROW, Q_COLUMN, FORGE_STEP)
+    theme._sparks.clear()
+
+    theme.on_key_press(Q_ROW, Q_COLUMN)
+    flash = theme.color_at(Q_ROW, Q_COLUMN, FORGE_STEP * 2)
+    assert theme._sparks, "a strike throws sparks"
+    assert min(flash) > 200 and sum(flash) > sum(before) + 200, "the anvil flashes white"
+
+
+def test_the_idle_forge_puts_on_a_show():
+    theme = ForgeTheme()
+    frames = [_frame(theme, 1.0 + step * 0.25) for step in range(12)]
+    assert all(earlier != later for earlier, later in zip(frames, frames[1:]))
+    assert theme._sparks, "the idle smith throws sparks on its own"
+    assert min(sum(color) for color in frames[-1]) > 100, "no key sits dim"
+
+
+def test_the_smith_stands_aside_while_you_type():
+    theme = ForgeTheme()
+    theme.color_at(0, 0, 1.0)
+    beats = theme._smith_beat
+    theme.on_key_press(Q_ROW, Q_COLUMN)
+    theme.color_at(0, 0, 1.0 + ForgeTheme._SMITH_STANDBY - 0.5)
+    assert theme._smith_beat == beats, "no idle strikes right after a key press"
+    theme.color_at(0, 0, 1.0 + ForgeTheme._SMITH_STANDBY + 0.5)
+    assert theme._smith_beat > beats, "the show resumes once typing stops"
+
+
+def test_sustained_typing_drives_the_bed_white_hot_then_it_settles():
+    theme = _quiet_forge()
+    elapsed = 0.0
+    for _ in range(50):  # ten seconds at five keys a second
+        elapsed += 0.2
+        theme.on_key_press(Q_ROW, Q_COLUMN)
+        theme.color_at(0, 0, elapsed)
+    assert theme.momentum > 0.8
+    hot_bed = theme.color_at(5, 10, elapsed)
+    assert hot_bed[1] > 180, "the bed runs yellow to white-hot in flow"
+
+    for second in range(1, 16):
+        theme.color_at(0, 0, elapsed + second)
+    assert theme.momentum < 0.1
+
+
+def test_heat_never_runs_away_on_its_own():
+    theme = ForgeTheme()
+    for second in range(0, 120, 3):
+        theme.color_at(0, 0, float(second))
+    assert max(max(row) for row in theme._heat) < 1.0
+
+
+def test_forge_replays_deterministically():
+    theme = ForgeTheme()
+    first_run = _frame(theme, 6.0)
+    _frame(theme, 0.0)
+    assert _frame(theme, 6.0) == first_run

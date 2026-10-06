@@ -11,7 +11,7 @@ import math
 from typing import Dict, List, Tuple
 
 from .layout import BOARD_WIDTH_UNITS, PIXEL_COLUMNS, physical_x, pixel_columns
-from .simulation import SandfallTheme
+from .simulation import ForgeTheme, SandfallTheme
 # Re-exported: the contract and helpers used to live here, and callers still
 # import them from this module.
 from .theme_base import (  # noqa: F401
@@ -806,6 +806,7 @@ class ReactorTheme(Theme):
 
 _THEME_CLASSES = (
     FlowTheme,
+    ForgeTheme,
     ReactorTheme,
     SandfallTheme,
     SupernovaTheme,

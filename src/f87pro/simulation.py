@@ -315,3 +315,277 @@ class SandfallTheme(SimulationTheme):
         # A slow shimmer so empty air is alive but never competes with sand.
         phase = physical_x(row, column) * 0.7 + row * 1.3 - elapsed * 1.1
         return scale_brightness(base, 1.0 + self._SKY_SHIMMER * math.sin(phase))
+
+
+class _Spark:
+    """One spark thrown off a strike, in key-width units."""
+
+    __slots__ = ("x", "y", "velocity_x", "velocity_y", "age", "lifetime")
+
+    def __init__(self, x: float, y: float, velocity_x: float, velocity_y: float,
+                 lifetime: float):
+        self.x = x
+        self.y = y
+        self.velocity_x = velocity_x
+        self.velocity_y = velocity_y
+        self.age = 0.0
+        self.lifetime = lifetime
+
+
+class ForgeTheme(SimulationTheme):
+    """
+    A blacksmith's forge where typing is the hammer.
+
+    Left alone, the forge works itself: flames churn up from the bed, an
+    unseen smith hammers a rhythm that wanders across the board throwing
+    sparks, and every few seconds the bellows push a bright wave from the
+    bottom row to the top. The moment you type, the smith steps aside and
+    your own key presses are the hammer: that spot flashes white-hot, sparks
+    fly up from it, and the heat spreads, rises and cools.
+
+    Momentum is what makes this different from a ripple theme. Sustained
+    typing stokes the forge bed along the bottom row, so a long run of steady
+    work takes the whole board from red through orange to white-hot, and it
+    settles back into the idle show a few seconds after you stop.
+    """
+
+    name = "forge"
+    description = "Typing is the hammer: strikes throw sparks, steady flow heats the board white-hot"
+    frames_per_second = 45
+    step_seconds = 1 / 30
+
+    # The forge already answers every keystroke, so keep it at full strength
+    # under --reactive and shrink the bubbles to a brief flash at the anvil.
+    reactive_base_brightness = 1.0
+    reactive_bubble_lifetime = 0.3
+    reactive_bubble_radius = 1.5
+
+    #: Banked coal through to white-hot, coolest first. It stays in fire
+    #: colours all the way down so the idle board and a strike feel like the
+    #: same forge.
+    _HEAT_RAMP = [
+        hex_to_rgb("#6e1204"),  # banked coal, still clearly lit
+        hex_to_rgb("#c41e08"),  # cherry red
+        hex_to_rgb("#ff3c0a"),  # flame red
+        hex_to_rgb("#ff7a00"),  # orange
+        hex_to_rgb("#ffc400"),  # yellow heat
+        hex_to_rgb("#fff4c2"),  # white-hot
+    ]
+    _SPARK_HOT = hex_to_rgb("#fff1b0")
+    _SPARK_COOL = hex_to_rgb("#ff7a00")
+
+    _STRIKE_HEAT = 0.95             # added to the struck key
+    _STRIKE_SPREAD = 0.35           # added to its left and right neighbours
+    _SPARKS_PER_STRIKE = 3
+
+    #: Seconds for heat to fall to ~37%. Short enough that a strike reads as a
+    #: flash, long enough that a typed word leaves a glowing trail behind it.
+    _COOLING_TIME = 0.9
+    _DIFFUSION = 0.12               # share of heat swapped with neighbours per step
+    _CONVECTION = 0.10              # share of heat each cell hands to the row above
+
+    _MOMENTUM_PER_PRESS = 0.06
+    #: Seconds for momentum to fall to ~37% once typing stops. At ~5 keys/s
+    #: (steady typing) momentum saturates; at ~2 keys/s it settles near half.
+    _MOMENTUM_DECAY_TIME = 4.0
+    _BED_IDLE_HEAT = 0.12           # the bed smoulders even with no typing
+    _BED_FLOW_HEAT = 1.0            # extra bed heat at full momentum
+    _BED_FLICKER = 0.08
+    #: Heat the whole board soaks up at full momentum, at the top row and at
+    #: the bed. Momentum curves through `_MOMENTUM_CURVE` first, so a few
+    #: stray keys barely warm the steel and only real flow lights it up.
+    _SOAK_TOP = 0.45
+    _SOAK_BOTTOM = 0.8
+    _MOMENTUM_CURVE = 1.6
+
+    _SPARK_GRAVITY = 14.0           # rows per second squared, pulling down
+    _SPARK_RADIUS = 0.5             # keys
+    _MAX_SPARKS = 40
+
+    # The idle smith: a hammer rhythm that walks the board on its own.
+    _SMITH_INTERVAL = 0.22          # seconds between its strikes
+    _SMITH_HEAT = 0.85
+    _SMITH_SPARKS = 2
+    #: Seconds after your last key press before the smith takes over again,
+    #: so your own strikes are never confused with its.
+    _SMITH_STANDBY = 2.5
+
+    # Flames churning up from the bed, always on underneath everything.
+    _FLAME_BASE = 0.42              # heat at the bed
+    _FLAME_FALLOFF = 0.30           # heat lost toward the top row
+    _FLAME_CHURN = 0.18
+    _FLAME_RISE_SPEED = 3.2         # how fast flame fronts climb
+
+    # The bellows: a bright wave pushed from the bed to the top row.
+    _BELLOWS_PERIOD = 4.5           # seconds between breaths
+    _BELLOWS_SPEED = 6.0            # rows per second
+    _BELLOWS_WIDTH = 0.9            # rows
+    _BELLOWS_HEAT = 0.55
+
+    _MIN_BRIGHTNESS = 0.9
+    _SEED = 87
+
+    def _reset(self) -> None:
+        self._random = random.Random(self._SEED)
+        self._heat: List[List[float]] = [
+            [0.0] * PIXEL_COLUMNS for _ in range(KEYBOARD_ROWS)
+        ]
+        self._sparks: List[_Spark] = []
+        self._momentum = 0.0
+        self._next_smith_beat = 0.0
+        self._last_press = -self._SMITH_STANDBY
+        self._smith_beat = 0
+        self._now = 0.0
+
+    @property
+    def momentum(self) -> float:
+        """How stoked the forge is, 0.0 (cold) to 1.0 (sustained flow)."""
+        return self._momentum
+
+    # ------------------------------------------------------------ input ---
+
+    def _apply_press(self, row: int, column: int) -> None:
+        self._momentum = min(1.0, self._momentum + self._MOMENTUM_PER_PRESS)
+        self._last_press = self._now
+        pixels = _key_pixels(row, column)
+        self._strike(row, pixels, self._STRIKE_HEAT, self._SPARKS_PER_STRIKE)
+
+    def _strike(self, row: int, pixels: Tuple[int, ...], heat: float, spark_count: int) -> None:
+        cells = self._heat[row]
+        for pixel in pixels:
+            cells[pixel] += heat
+        for side in (pixels[0] - 1, pixels[-1] + 1):
+            if 0 <= side < PIXEL_COLUMNS:
+                cells[side] += heat * self._STRIKE_SPREAD
+
+        center = (pixels[0] + pixels[-1]) / 2 + 0.5
+        for _ in range(spark_count):
+            if len(self._sparks) >= self._MAX_SPARKS:
+                self._sparks.pop(0)
+            self._sparks.append(_Spark(
+                x=center,
+                y=float(row),
+                velocity_x=self._random.uniform(-4.0, 4.0),
+                velocity_y=-self._random.uniform(7.0, 12.0),
+                lifetime=self._random.uniform(0.45, 0.8),
+            ))
+
+    # ---------------------------------------------------------- physics ---
+
+    def _step(self, now: float) -> None:
+        dt = self.step_seconds
+        self._momentum *= math.exp(-dt / self._MOMENTUM_DECAY_TIME)
+
+        self._now = now
+        smith_is_free = now - self._last_press >= self._SMITH_STANDBY
+        if now >= self._next_smith_beat:
+            self._next_smith_beat = now + self._SMITH_INTERVAL
+            if smith_is_free:
+                self._smith_strike()
+
+        self._stoke_bed(now)
+        self._spread_heat(dt)
+        self._move_sparks(dt)
+
+    def _smith_strike(self) -> None:
+        """
+        One beat of the idle hammer rhythm: tap, tap, tap, BANG.
+
+        The strike point traces two sine paths at unrelated rates, so it
+        sweeps the whole board smoothly without ever repeating a loop.
+        """
+        beat = self._smith_beat
+        self._smith_beat += 1
+        pixel = round((PIXEL_COLUMNS - 1) * (0.5 + 0.5 * math.sin(beat * 0.31)))
+        row = round((KEYBOARD_ROWS - 1) * (0.5 + 0.5 * math.sin(beat * 0.17 + 1.0)))
+        is_accent = beat % 4 == 3
+        heat = self._SMITH_HEAT * (1.4 if is_accent else 0.8)
+        sparks = self._SMITH_SPARKS * (3 if is_accent else 1)
+        self._strike(row, (pixel,), heat, spark_count=sparks)
+
+    def _stoke_bed(self, now: float) -> None:
+        """Hold the bottom row at a heat set by momentum, flickering per cell."""
+        target = self._BED_IDLE_HEAT + self._BED_FLOW_HEAT * self._momentum
+        bed = self._heat[-1]
+        for pixel in range(PIXEL_COLUMNS):
+            flicker = self._BED_FLICKER * math.sin(now * 9.0 + pixel * 2.3)
+            bed[pixel] = max(bed[pixel], target + flicker)
+
+    def _spread_heat(self, dt: float) -> None:
+        cooling = math.exp(-dt / self._COOLING_TIME)
+        old = self._heat
+        new = [[0.0] * PIXEL_COLUMNS for _ in range(KEYBOARD_ROWS)]
+        for row in range(KEYBOARD_ROWS):
+            for pixel in range(PIXEL_COLUMNS):
+                here = old[row][pixel]
+                left = old[row][pixel - 1] if pixel > 0 else here
+                right = old[row][pixel + 1] if pixel < PIXEL_COLUMNS - 1 else here
+                new[row][pixel] += here + self._DIFFUSION * ((left + right) / 2 - here)
+                # Hot air rises: hand a share of this cell's heat to the one
+                # above. Moved, not copied, or the board heats itself; off the
+                # top row it vents away, or the function row would pool heat.
+                rising = self._CONVECTION * here
+                new[row][pixel] -= rising
+                if row > 0:
+                    new[row - 1][pixel] += rising
+        self._heat = [[min(1.5, cell * cooling) for cell in cells] for cells in new]
+
+    def _move_sparks(self, dt: float) -> None:
+        alive = []
+        for spark in self._sparks:
+            spark.age += dt
+            spark.velocity_y += self._SPARK_GRAVITY * dt
+            spark.x += spark.velocity_x * dt
+            spark.y += spark.velocity_y * dt
+            if spark.age < spark.lifetime and -1.0 < spark.y < KEYBOARD_ROWS:
+                alive.append(spark)
+        self._sparks = alive
+
+    # -------------------------------------------------------- rendering ---
+
+    def _render_key(self, row: int, column: int, elapsed: float) -> RGB:
+        heat = max(self._heat[row][pixel] for pixel in _key_pixels(row, column))
+        key_x = physical_x(row, column)
+        heat = min(1.0, max(heat, self._soak(row), self._flames(key_x, row, elapsed)))
+        color = sample_ramp(self._HEAT_RAMP, heat)
+        color = scale_brightness(color, self._MIN_BRIGHTNESS + (1.0 - self._MIN_BRIGHTNESS) * heat)
+
+        return self._add_sparks(color, key_x, row)
+
+    def _soak(self, row: int) -> float:
+        """Background heat from momentum, hotter toward the bed."""
+        depth = row / (KEYBOARD_ROWS - 1)
+        reach = self._SOAK_TOP + (self._SOAK_BOTTOM - self._SOAK_TOP) * depth
+        return reach * self._momentum ** self._MOMENTUM_CURVE
+
+    def _flames(self, key_x: float, row: int, elapsed: float) -> float:
+        """
+        Always-on fire under everything else: churning flame fronts climbing
+        from the bed, plus the bellows wave.
+        """
+        height = (KEYBOARD_ROWS - 1 - row) / (KEYBOARD_ROWS - 1)
+        churn = (
+            math.sin(key_x * 0.9 - elapsed * self._FLAME_RISE_SPEED + row * 1.3)
+            + math.sin(key_x * 0.41 + elapsed * 1.7)
+        ) * 0.5
+        flame = self._FLAME_BASE - self._FLAME_FALLOFF * height + self._FLAME_CHURN * churn
+
+        front = (elapsed % self._BELLOWS_PERIOD) * self._BELLOWS_SPEED
+        distance = (KEYBOARD_ROWS - 1 - row) - front
+        bellows = math.exp(-(distance * distance) / (2 * self._BELLOWS_WIDTH ** 2))
+        return flame + self._BELLOWS_HEAT * bellows
+
+    def _add_sparks(self, color: RGB, key_x: float, row: int) -> RGB:
+        red, green, blue = color
+        for spark in self._sparks:
+            distance_sq = (key_x - spark.x) ** 2 + (row - spark.y) ** 2
+            glow = math.exp(-distance_sq / (2 * self._SPARK_RADIUS ** 2))
+            if glow < 0.02:
+                continue
+            fade = 1.0 - spark.age / spark.lifetime
+            tint = _mix(self._SPARK_COOL, self._SPARK_HOT, fade)
+            strength = glow * fade
+            red += tint[0] * strength
+            green += tint[1] * strength
+            blue += tint[2] * strength
+        return (min(255, int(red)), min(255, int(green)), min(255, int(blue)))

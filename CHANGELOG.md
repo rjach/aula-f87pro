@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `forge` theme: a simulation where each keypress strikes the metal, heating
+  that key and throwing sparks. Steady typing builds momentum that heats the
+  whole board to white-hot. Left idle, it plays a fire show of its own.
 - `sandfall` theme: falling-sand physics where each keypress drops a grain from
   that key. It's the first simulation theme (`SimulationTheme` in
   `simulation.py`), where the board keeps state and keypresses feed into it.
