@@ -8,7 +8,7 @@ This is a fork of [Ahorts/aula-f87pro](https://github.com/Ahorts/aula-f87pro),
 a small CLI for sending RGB data to the F87 Pro. The original handles solid
 colours, breathing, and pywal sync on Linux. This fork adds:
 
-- 14 animated themes, each computed per key from its real position on the board
+- 15 animated themes, each computed per key from its real position on the board
 - `--reactive`, which lights up a ripple from each key you press (macOS)
 - macOS support through `hidapi`, with the Input Monitoring setup documented
 - `--preview`, which draws any theme in your terminal so you don't need the keyboard
@@ -104,6 +104,7 @@ aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard n
 | `matrix`    | Green code rain with bright leading characters. |
 | `voltage`   | White-blue electric arcs across a dark board. |
 | `supernova` | A spinning rainbow galaxy with shockwaves bursting from a white-hot core. |
+| `forge`     | Typing is the hammer. Each keypress strikes hot and throws sparks, and steady typing heats the board to white-hot. When you're not typing it plays a fire show of its own. Pair it with `--reactive`. |
 | `reactor`   | Plasma that sparks on its own and surges while you type. |
 | `sandfall`  | Falling sand. Each keypress drops a grain from that key. Grains pile up, and a full bottom row flashes and clears. Pair it with `--reactive`. |
 | `rojan`     | **ROJAN** in neon pixel letters on an unlit board. Pair it with `--reactive`. |
@@ -120,6 +121,14 @@ colour from its position and the time. `sandfall` runs a small simulation with
 its own state, and each keypress becomes an input to it: a grain dropped from
 the key you pressed. The ripples shrink to a small splash so the pile stays
 visible. Without `--reactive`, grains still drift in from the top on their own.
+
+`forge` is also a simulation, built around momentum. Each keypress heats the
+key you hit and throws sparks upward. Heat spreads, rises and cools within
+about a second. Steady typing also stokes the forge bed along the bottom row,
+so a long stretch of focused work turns the board red, then orange, then
+white-hot at the bed. Left alone, it plays a show: flames churn up from the bottom, a hammer rhythm
+wanders the board throwing sparks, and a bright wave rises every few seconds.
+It pauses while you type and comes back 2.5 seconds after you stop.
 
 ## Keeping a theme running
 
