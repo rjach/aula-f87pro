@@ -7,6 +7,7 @@ from .device import AulaF87Pro
 from .colors import parse_color_input, predefined_colors
 from .pywal import load_wal_colors, WalFileWatcher
 from .themes import THEMES, DEFAULT_THEME, BrightnessAdjusted, get_theme
+from .audio import SystemAudioListener
 from .reactive import BUBBLE_LIFETIME, BUBBLE_MAX_RADIUS, BubbleField, MacOSKeyListener
 from .preview import preview as preview_theme
 from .layout import KEY_POSITIONS
@@ -18,6 +19,10 @@ DEFAULT_THEME_DURATION = 0.0
 FULL_BRIGHTNESS_PERCENT = 100
 #: A --preview with no explicit duration runs long enough to judge the theme.
 PREVIEW_DURATION = 8.0
+#: Longest wait for the audio helper to deliver sound or fail (it fails fast
+#: on a missing permission) before the lights start, so a failure is printed
+#: where it can be read rather than under the animation.
+AUDIO_SETTLE_SECONDS = 2.0
 #: Bubbles are short and fast, so they need a higher frame rate than a drifting
 #: background theme does.
 REACTIVE_FPS = 60
@@ -39,6 +44,7 @@ Examples:
   aula-f87pro --theme dusk --brightness 60
   aula-f87pro --theme aurora --reactive  # flowing base + bubble on each keystroke
   aula-f87pro --theme sandfall --reactive  # every keystroke drops a grain of sand
+  aula-f87pro --theme pulse        # lights dance to whatever the Mac is playing
   aula-f87pro --theme tide --preview   # preview in the terminal, no hardware
   aula-f87pro --list-themes
   aula-f87pro --pywal              # accent color from pywal
@@ -130,6 +136,39 @@ def _build_theme(theme_name: str, brightness_percent: int):
     return BrightnessAdjusted(theme, brightness_percent / FULL_BRIGHTNESS_PERCENT)
 
 
+def _start_audio_listener(theme):
+    """
+    Feed system audio to a theme that wants it.
+
+    Capture failing is never fatal: the theme falls back to its own idle show,
+    so the user gets lights either way and a hint on how to enable sound.
+
+    @param theme - The theme about to play.
+    @returns The running listener, or None when the theme ignores audio or
+        capture could not start.
+    """
+    if not theme.listens_to_audio:
+        return None
+
+    settled = threading.Event()
+
+    def report_failure(reason):
+        print(f"System audio unavailable: {reason}\nPlaying the idle show instead.")
+
+    def on_late_failure(reason):
+        # Failures before settling are reported below, synchronously.
+        if settled.is_set():
+            report_failure(reason)
+
+    listener = SystemAudioListener(on_levels=theme.on_audio_levels, on_failure=on_late_failure)
+    if not listener.start() or not listener.wait_until_settled(AUDIO_SETTLE_SECONDS):
+        report_failure(listener.failure)
+        return None
+    settled.set()
+    print("Listening to system audio (levels only; nothing is recorded).")
+    return listener
+
+
 def main():
     parser = create_parser()
     args = parser.parse_args()
@@ -173,10 +212,15 @@ def main():
             return 1
 
         if args.preview:
-            preview_theme(
-                selected_theme,
-                duration=_resolve_duration(args, DEFAULT_THEME_DURATION) or PREVIEW_DURATION,
-            )
+            audio_listener = _start_audio_listener(selected_theme)
+            try:
+                preview_theme(
+                    selected_theme,
+                    duration=_resolve_duration(args, DEFAULT_THEME_DURATION) or PREVIEW_DURATION,
+                )
+            finally:
+                if audio_listener:
+                    audio_listener.stop()
             return 0
 
     if not keyboard.connect(force_find=args.force_find):
@@ -186,7 +230,8 @@ def main():
             print(f"Meanwhile you can preview the theme: "
                   f"aula-f87pro --theme {args.theme} --preview")
         return 1
-    
+
+    audio_listener = _start_audio_listener(selected_theme) if args.theme else None
     try:
         if args.off:
             print("Turning off all lighting...")
@@ -342,6 +387,8 @@ def main():
         print(f"Unexpected error: {e}")
         return 1
     finally:
+        if audio_listener:
+            audio_listener.stop()
         keyboard.disconnect()
     
     return 0
