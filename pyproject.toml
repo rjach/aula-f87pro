@@ -27,6 +27,10 @@ dependencies = [
 where = ["src"]
 include = ["f87pro*"]
 
+[tool.setuptools.package-data]
+# The system audio helper is compiled from source on first use.
+f87pro = ["audio_tap.swift"]
+
 [project.optional-dependencies]
 watch = ["inotify"]  # For efficient file watching (recommended for --watch mode)
 

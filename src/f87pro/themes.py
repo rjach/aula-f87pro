@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple
 
 from .layout import BOARD_WIDTH_UNITS, PIXEL_COLUMNS, physical_x, pixel_columns
 from .simulation import ForgeTheme, SandfallTheme
+from .sound import PulseTheme
 # Re-exported: the contract and helpers used to live here, and callers still
 # import them from this module.
 from .theme_base import (  # noqa: F401
@@ -807,6 +808,7 @@ class ReactorTheme(Theme):
 _THEME_CLASSES = (
     FlowTheme,
     ForgeTheme,
+    PulseTheme,
     ReactorTheme,
     SandfallTheme,
     SupernovaTheme,
@@ -878,6 +880,7 @@ class BrightnessAdjusted(Theme):
         self.reactive_bubble_lifetime = theme.reactive_bubble_lifetime
         self.reactive_bubble_radius = theme.reactive_bubble_radius
         self.reactive_surge = theme.reactive_surge
+        self.listens_to_audio = theme.listens_to_audio
 
     @property
     def is_static(self) -> bool:
@@ -885,6 +888,9 @@ class BrightnessAdjusted(Theme):
 
     def on_key_press(self, row: int, column: int) -> None:
         self._theme.on_key_press(row, column)
+
+    def on_audio_levels(self, levels) -> None:
+        self._theme.on_audio_levels(levels)
 
     def color_at(self, row: int, column: int, elapsed: float) -> RGB:
         return scale_brightness(self._theme.color_at(row, column, elapsed), self._level)

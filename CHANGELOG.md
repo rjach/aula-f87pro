@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `pulse` theme: an equalizer driven by the Mac's sound output, captured
+  through a small ScreenCaptureKit helper (`audio_tap.swift`). Bars adjust to
+  the track's volume, bass beats send rings and shift the colours, and with
+  no sound it plays a rainbow equalizer show with a heartbeat.
+- `Theme.listens_to_audio` and `Theme.on_audio_levels(levels)` hooks, fed by
+  `audio.SystemAudioListener`.
 - `forge` theme: a simulation where each keypress strikes the metal, heating
   that key and throwing sparks. Steady typing builds momentum that heats the
   whole board to white-hot. Left idle, it plays a fire show of its own.
