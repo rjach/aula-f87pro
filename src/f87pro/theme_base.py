@@ -175,6 +175,8 @@ class Theme(ABC):
     #: How hard typing drives the backdrop: at full typing energy the animation
     #: runs (1 + surge) times faster and brighter. 0 leaves it unaffected.
     reactive_surge: float = 0.0
+    #: Whether the theme wants system audio levels fed to `on_audio_levels`.
+    listens_to_audio: bool = False
 
     def on_key_press(self, row: int, column: int) -> None:
         """
@@ -185,6 +187,15 @@ class Theme(ABC):
 
         @param row - Physical row of the pressed key.
         @param column - Physical column of the pressed key.
+        """
+
+    def on_audio_levels(self, levels) -> None:
+        """
+        One window of system audio levels (only when `listens_to_audio`).
+
+        Called from the audio-reader thread, roughly 60 times a second.
+
+        @param levels - An `audio.AudioLevels` for the latest window.
         """
 
     @abstractmethod
