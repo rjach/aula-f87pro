@@ -8,8 +8,8 @@ This is a fork of [Ahorts/aula-f87pro](https://github.com/Ahorts/aula-f87pro),
 a small CLI for sending RGB data to the F87 Pro. The original handles solid
 colours, breathing, and pywal sync on Linux. This fork adds:
 
-- 17 animated themes, each computed per key from its real position on the board
-- `pulse`, a theme that lights the board to whatever the Mac is playing (macOS)
+- 21 animated themes, each computed per key from its real position on the board
+- `pulse`, `blaze`, `waterfall`, `monsoon` and `core`: themes that light the board to whatever the Mac is playing (macOS)
 - `--reactive`, which lights up a ripple from each key you press (macOS)
 - macOS support through `hidapi`, with the Input Monitoring setup documented
 - `--preview`, which draws any theme in your terminal so you don't need the keyboard
@@ -90,6 +90,7 @@ aula-f87pro --theme dusk --brightness 60   # dimmer
 aula-f87pro --theme tide --duration 30     # stop after 30 seconds
 aula-f87pro --theme reactor --reactive     # reacts to typing (macOS)
 aula-f87pro --theme pulse                  # reacts to system sound (macOS)
+aula-f87pro --theme blaze                  # also: waterfall, monsoon, core
 aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard needed
 ```
 
@@ -108,6 +109,10 @@ aula-f87pro --theme nebula --preview       # show in the terminal, no keyboard n
 | `supernova` | A spinning rainbow galaxy with shockwaves bursting from a white-hot core. |
 | `forge`     | Typing is the hammer. Each keypress strikes hot and throws sparks, and steady typing heats the board to white-hot. When you're not typing it plays a fire show of its own. Pair it with `--reactive`. |
 | `pulse`     | An equalizer that moves to whatever the Mac is playing. Bass sits in the middle and treble at the edges. Each beat sends a ring out from the spacebar and shifts the colours. With no sound it plays its own rainbow equalizer with a heartbeat. |
+| `blaze`     | A fire that burns to the music. Bass sets how high the flames climb, each beat throws sparks up from the bottom row, and treble crackles along the flame tips. With no sound it smoulders in the same reds and oranges. |
+| `waterfall` | A scrolling spectrogram. Bass is on the bottom row and treble on the top. The right edge is the sound right now, and it slides left, so you see the last second and a half of the song. Beats flash the column that heard them. |
+| `monsoon`   | Rain on dark water. Treble falls as small drops, each beat lands a big drop whose ripples cross the board, and bass swells a glow up from the bottom rows. With no sound it drizzles. |
+| `core`      | A reactor core on a spinning colour wheel, so every direction from the centre is a different colour. Bass sets the core's size, the mids light a ring in another colour, and treble flickers at the rim in a third. Each beat turns the wheel and fires a shockwave in a new colour. Loud music spins it faster and burns the core whiter. |
 | `reactor`   | Plasma that sparks on its own and surges while you type. |
 | `sandfall`  | Falling sand. Each keypress drops a grain from that key. Grains pile up, and a full bottom row flashes and clears. Pair it with `--reactive`. |
 | `rojan`     | **ROJAN** in neon pixel letters on an unlit board. Pair it with `--reactive`. |
@@ -133,9 +138,9 @@ white-hot at the bed. Left alone, it plays a show: flames churn up from the bott
 wanders the board throwing sparks, and a bright wave rises every few seconds.
 It pauses while you type and comes back 2.5 seconds after you stop.
 
-### Sound-reactive mode (`pulse`)
+### Sound-reactive mode (`pulse`, `blaze`, `waterfall`, `monsoon`, `core`)
 
-`pulse` listens to the Mac's audio output: music, videos, games, anything
+These themes listen to the Mac's audio output: music, videos, games, anything
 that plays sound. It doesn't use the microphone. A small Swift helper
 (`src/f87pro/audio_tap.swift`) captures the output through ScreenCaptureKit,
 splits it into 12 frequency bands, and passes only those levels to Python.
@@ -151,8 +156,8 @@ No audio is recorded or saved.
   asks for the smallest video it can (2×2 pixels, once a second) and ignores it.
 - **Volume:** the bars adjust to the level of what's playing, so quiet and
   loud tracks both fill the board.
-- **No sound:** when nothing is playing, or the audio can't be captured, the
-  theme plays its idle show. When sound starts, the real spectrum fades in.
+- **No sound:** when nothing is playing, or the audio can't be captured, each
+  theme plays its own idle show. When sound starts, the real spectrum fades in.
   After about 1.5 seconds of silence, the show fades back.
 - `--reactive` works too. Keypresses add a short flash and a small ring.
 
