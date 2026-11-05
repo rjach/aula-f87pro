@@ -8,6 +8,7 @@ themes treat key presses.
 import colorsys
 import math
 import threading
+from abc import abstractmethod
 from typing import List
 
 from .audio import BAND_COUNT, AudioLevels, SpectrumTracker
@@ -55,23 +56,40 @@ class _Wave:
         self.hue_shift = hue_shift
 
 
-class PulseTheme(SimulationTheme):
+def _ring_light(key_x: float, row: float, origin_x: float, origin_row: float,
+                radius: float, width: float, row_stretch: float = 1.0) -> float:
     """
-    A spectrum equalizer driven by the system's sound.
+    Brightness of a key under a ring of `radius` keys around an origin.
 
-    Bass sits in the middle of the board and treble at the edges, so the bars
-    are mirrored like a speaker cone. Every bass beat sends a ring out from
-    the spacebar, kicks the whole board brighter, and steps the colours round
-    the wheel, so the board changes with the track rather than on a timer.
+    @param width - Soft half-width of the ring, in keys.
+    @param row_stretch - Scales vertical distance, so a ring can be drawn as
+        an oval that matches the board's wide shape.
+    """
+    distance = math.hypot(key_x - origin_x, (row - origin_row) * row_stretch)
+    offset = (distance - radius) / width
+    return math.exp(-offset * offset)
 
-    When nothing is playing, or the audio cannot be captured, it plays its
-    own show: a slow rainbow equalizer breathing as if music were on, with a
-    heartbeat ring every few seconds. Sound fades the show out and fades the
-    real spectrum in; silence for a moment brings the show back.
+
+#: Band groups, bass first. Twelve bands split roughly where a mix does.
+BASS_BANDS = range(0, 3)
+MID_BANDS = range(3, 8)
+TREBLE_BANDS = range(8, BAND_COUNT)
+
+
+class AudioTheme(SimulationTheme):
+    """
+    Base for themes that turn the system's sound into light.
+
+    Owns the audio plumbing every sound theme needs: levels arrive on the
+    audio-reader thread, queue up, and are folded into a `SpectrumTracker`
+    on the next simulation step, so rendering only ever reads settled state.
+    A stalled or missing stream decays the tracker toward silence, which is
+    what hands the board back to each theme's idle show.
+
+    Subclasses implement `_reset_scene`, `_step_scene`, `_apply_press` and
+    `_render_key`, reading `self._levels`, `self._tracker` and `presence`.
     """
 
-    name = "pulse"
-    description = "Equalizer that dances to your Mac's sound; plays its own show in silence"
     frames_per_second = 60
     step_seconds = 1 / 60
     listens_to_audio = True
@@ -89,6 +107,95 @@ class PulseTheme(SimulationTheme):
     _AUDIO_STALL_SECONDS = 0.25
     #: Bound on queued audio windows if the frame loop falls behind.
     _MAX_PENDING_AUDIO = 30
+
+    def __init__(self):
+        self._audio_lock = threading.Lock()
+        self._pending_audio: List[AudioLevels] = []
+        super().__init__()
+
+    def on_audio_levels(self, levels: AudioLevels) -> None:
+        # Called from the audio-reader thread; applied on the next step.
+        with self._audio_lock:
+            if len(self._pending_audio) >= self._MAX_PENDING_AUDIO:
+                self._pending_audio.pop(0)
+            self._pending_audio.append(levels)
+
+    @property
+    def presence(self) -> float:
+        """How much of the board the music owns, 0.0 (idle show) to 1.0."""
+        return self._tracker.presence
+
+    def _reset(self) -> None:
+        self._tracker = SpectrumTracker()
+        self._levels = [0.0] * BAND_COUNT
+        self._quiet_for = 0.0
+        self._reset_scene()
+
+    def _step(self, now: float) -> None:
+        dt = self.step_seconds
+        self._feed_audio(dt)
+        self._levels = self._tracker.levels
+        self._step_scene(now, dt)
+
+    def _feed_audio(self, dt: float) -> None:
+        with self._audio_lock:
+            windows, self._pending_audio = self._pending_audio, []
+        for levels in windows:
+            self._tracker.update(levels, self._AUDIO_WINDOW)
+
+        if windows:
+            self._quiet_for = 0.0
+            return
+        self._quiet_for += dt
+        if self._quiet_for >= self._AUDIO_STALL_SECONDS:
+            self._tracker.decay(dt)
+
+    def _band_mean(self, bands: range) -> float:
+        """Average level of a group of bands, 0.0-1.0."""
+        return sum(self._levels[index] for index in bands) / len(bands)
+
+    def _band_at(self, position: float) -> float:
+        """Level at `position` along the spectrum: 0.0 is bass, 1.0 treble."""
+        scaled = max(0.0, min(1.0, position)) * (BAND_COUNT - 1)
+        lower = int(scaled)
+        upper = min(lower + 1, BAND_COUNT - 1)
+        blend = scaled - lower
+        return self._levels[lower] + (self._levels[upper] - self._levels[lower]) * blend
+
+    def _with_music(self, idle: float, music: float) -> float:
+        """
+        Blend a value the idle show uses with the one the music drives, by
+        `presence`. Driving one scene with blended inputs, rather than
+        cross-fading two pictures, keeps the hand-over seamless.
+        """
+        return idle + (music - idle) * self._tracker.presence
+
+    @abstractmethod
+    def _reset_scene(self) -> None:
+        """Return the theme's own world to its starting state."""
+
+    @abstractmethod
+    def _step_scene(self, now: float, dt: float) -> None:
+        """Advance the theme's world one step; audio is already folded in."""
+
+
+class PulseTheme(AudioTheme):
+    """
+    A spectrum equalizer driven by the system's sound.
+
+    Bass sits in the middle of the board and treble at the edges, so the bars
+    are mirrored like a speaker cone. Every bass beat sends a ring out from
+    the spacebar, kicks the whole board brighter, and steps the colours round
+    the wheel, so the board changes with the track rather than on a timer.
+
+    When nothing is playing, or the audio cannot be captured, it plays its
+    own show: a slow rainbow equalizer breathing as if music were on, with a
+    heartbeat ring every few seconds. Sound fades the show out and fades the
+    real spectrum in; silence for a moment brings the show back.
+    """
+
+    name = "pulse"
+    description = "Equalizer that dances to your Mac's sound; plays its own show in silence"
 
     # -- music --------------------------------------------------------------
     #: Brightness of keys above a bar. Kept well lit: "full brightness" is the
@@ -125,40 +232,17 @@ class PulseTheme(SimulationTheme):
     #: The spacebar, where beats land.
     _BEAT_ORIGIN = (BOARD_WIDTH_UNITS / 2, KEYBOARD_ROWS - 1)
 
-    def __init__(self):
-        self._audio_lock = threading.Lock()
-        self._pending_audio: List[AudioLevels] = []
-        super().__init__()
-
-    def on_audio_levels(self, levels: AudioLevels) -> None:
-        # Called from the audio-reader thread; applied on the next step.
-        with self._audio_lock:
-            if len(self._pending_audio) >= self._MAX_PENDING_AUDIO:
-                self._pending_audio.pop(0)
-            self._pending_audio.append(levels)
-
-    @property
-    def presence(self) -> float:
-        """How much of the board the music owns, 0.0 (idle show) to 1.0."""
-        return self._tracker.presence
-
     # ------------------------------------------------------------ world ---
 
-    def _reset(self) -> None:
-        self._tracker = SpectrumTracker()
-        self._levels = [0.0] * BAND_COUNT
+    def _reset_scene(self) -> None:
         self._waves: List[_Wave] = []
         self._kick = 0.0
         self._hue = 0.0
-        self._quiet_for = 0.0
 
     def _apply_press(self, row: int, column: int) -> None:
         self._add_wave(_Wave(physical_x(row, column), row, self._PRESS_WAVE_STRENGTH, 0.5))
 
-    def _step(self, now: float) -> None:
-        dt = self.step_seconds
-        self._feed_audio(dt)
-
+    def _step_scene(self, now: float, dt: float) -> None:
         if self._tracker.take_beat():
             self._kick = 1.0
             self._hue += self._BEAT_HUE_STEP
@@ -167,21 +251,7 @@ class PulseTheme(SimulationTheme):
 
         self._kick *= math.exp(-dt / self._KICK_DECAY_TIME)
         self._hue += self._HUE_DRIFT * dt
-        self._levels = self._tracker.levels
         self._age_waves(dt)
-
-    def _feed_audio(self, dt: float) -> None:
-        with self._audio_lock:
-            windows, self._pending_audio = self._pending_audio, []
-        for levels in windows:
-            self._tracker.update(levels, self._AUDIO_WINDOW)
-
-        if windows:
-            self._quiet_for = 0.0
-            return
-        self._quiet_for += dt
-        if self._quiet_for >= self._AUDIO_STALL_SECONDS:
-            self._tracker.decay(dt)
 
     def _add_wave(self, wave: _Wave) -> None:
         if len(self._waves) >= self._MAX_WAVES:
@@ -209,16 +279,8 @@ class PulseTheme(SimulationTheme):
         music = self._music_color(key_x, row, spread, height)
         return music if idle is None else _mix(idle, music, presence)
 
-    def _band_level(self, spread: float) -> float:
-        """Level at a point across the board, bass in the middle."""
-        position = spread * (BAND_COUNT - 1)
-        lower = int(position)
-        upper = min(lower + 1, BAND_COUNT - 1)
-        blend = position - lower
-        return self._levels[lower] + (self._levels[upper] - self._levels[lower]) * blend
-
     def _music_color(self, key_x: float, row: int, spread: float, height: float) -> RGB:
-        bar = self._band_level(spread)
+        bar = self._band_at(spread)
         hue = self._hue + spread * self._HUE_ACROSS + height * 0.06
         fill = _bar_fill(height, bar)
 
@@ -267,7 +329,4 @@ class PulseTheme(SimulationTheme):
 
     def _ring(self, key_x: float, row: int, origin_x: float, origin_row: float,
               radius: float) -> float:
-        """Brightness of a key under a ring of `radius` keys around an origin."""
-        distance = math.hypot(key_x - origin_x, row - origin_row)
-        offset = (distance - radius) / self._WAVE_WIDTH
-        return math.exp(-offset * offset)
+        return _ring_light(key_x, row, origin_x, origin_row, radius, self._WAVE_WIDTH)

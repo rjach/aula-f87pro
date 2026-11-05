@@ -332,6 +332,61 @@ class _Spark:
         self.lifetime = lifetime
 
 
+#: Banked coal through to white-hot, coolest first. It stays in fire colours
+#: all the way down so an idle board and a flare feel like the same fire.
+FIRE_RAMP: List[RGB] = [
+    hex_to_rgb("#6e1204"),  # banked coal, still clearly lit
+    hex_to_rgb("#c41e08"),  # cherry red
+    hex_to_rgb("#ff3c0a"),  # flame red
+    hex_to_rgb("#ff7a00"),  # orange
+    hex_to_rgb("#ffc400"),  # yellow heat
+    hex_to_rgb("#fff4c2"),  # white-hot
+]
+FIRE_SPARK_HOT: RGB = hex_to_rgb("#fff1b0")
+FIRE_SPARK_COOL: RGB = hex_to_rgb("#ff7a00")
+
+
+def move_sparks(sparks: List[_Spark], dt: float, gravity: float) -> List[_Spark]:
+    """
+    Advance sparks one step under gravity.
+
+    @param gravity - Rows per second squared, pulling toward the bottom row.
+    @returns The sparks still alive and still on the board.
+    """
+    alive = []
+    for spark in sparks:
+        spark.age += dt
+        spark.velocity_y += gravity * dt
+        spark.x += spark.velocity_x * dt
+        spark.y += spark.velocity_y * dt
+        if spark.age < spark.lifetime and -1.0 < spark.y < KEYBOARD_ROWS:
+            alive.append(spark)
+    return alive
+
+
+def add_spark_light(color: RGB, sparks: List[_Spark], key_x: float, row: int,
+                    radius: float) -> RGB:
+    """
+    Light sparks add to a key: hot white when fresh, cooling to orange.
+
+    @param radius - Glow radius of one spark, in keys.
+    @returns `color` with every nearby spark added on top, clamped.
+    """
+    red, green, blue = color
+    for spark in sparks:
+        distance_sq = (key_x - spark.x) ** 2 + (row - spark.y) ** 2
+        glow = math.exp(-distance_sq / (2 * radius ** 2))
+        if glow < 0.02:
+            continue
+        fade = 1.0 - spark.age / spark.lifetime
+        tint = _mix(FIRE_SPARK_COOL, FIRE_SPARK_HOT, fade)
+        strength = glow * fade
+        red += tint[0] * strength
+        green += tint[1] * strength
+        blue += tint[2] * strength
+    return (min(255, int(red)), min(255, int(green)), min(255, int(blue)))
+
+
 class ForgeTheme(SimulationTheme):
     """
     A blacksmith's forge where typing is the hammer.
@@ -360,19 +415,7 @@ class ForgeTheme(SimulationTheme):
     reactive_bubble_lifetime = 0.3
     reactive_bubble_radius = 1.5
 
-    #: Banked coal through to white-hot, coolest first. It stays in fire
-    #: colours all the way down so the idle board and a strike feel like the
-    #: same forge.
-    _HEAT_RAMP = [
-        hex_to_rgb("#6e1204"),  # banked coal, still clearly lit
-        hex_to_rgb("#c41e08"),  # cherry red
-        hex_to_rgb("#ff3c0a"),  # flame red
-        hex_to_rgb("#ff7a00"),  # orange
-        hex_to_rgb("#ffc400"),  # yellow heat
-        hex_to_rgb("#fff4c2"),  # white-hot
-    ]
-    _SPARK_HOT = hex_to_rgb("#fff1b0")
-    _SPARK_COOL = hex_to_rgb("#ff7a00")
+    _HEAT_RAMP = FIRE_RAMP
 
     _STRIKE_HEAT = 0.95             # added to the struck key
     _STRIKE_SPREAD = 0.35           # added to its left and right neighbours
@@ -531,15 +574,7 @@ class ForgeTheme(SimulationTheme):
         self._heat = [[min(1.5, cell * cooling) for cell in cells] for cells in new]
 
     def _move_sparks(self, dt: float) -> None:
-        alive = []
-        for spark in self._sparks:
-            spark.age += dt
-            spark.velocity_y += self._SPARK_GRAVITY * dt
-            spark.x += spark.velocity_x * dt
-            spark.y += spark.velocity_y * dt
-            if spark.age < spark.lifetime and -1.0 < spark.y < KEYBOARD_ROWS:
-                alive.append(spark)
-        self._sparks = alive
+        self._sparks = move_sparks(self._sparks, dt, self._SPARK_GRAVITY)
 
     # -------------------------------------------------------- rendering ---
 
@@ -576,16 +611,4 @@ class ForgeTheme(SimulationTheme):
         return flame + self._BELLOWS_HEAT * bellows
 
     def _add_sparks(self, color: RGB, key_x: float, row: int) -> RGB:
-        red, green, blue = color
-        for spark in self._sparks:
-            distance_sq = (key_x - spark.x) ** 2 + (row - spark.y) ** 2
-            glow = math.exp(-distance_sq / (2 * self._SPARK_RADIUS ** 2))
-            if glow < 0.02:
-                continue
-            fade = 1.0 - spark.age / spark.lifetime
-            tint = _mix(self._SPARK_COOL, self._SPARK_HOT, fade)
-            strength = glow * fade
-            red += tint[0] * strength
-            green += tint[1] * strength
-            blue += tint[2] * strength
-        return (min(255, int(red)), min(255, int(green)), min(255, int(blue)))
+        return add_spark_light(color, self._sparks, key_x, row, self._SPARK_RADIUS)

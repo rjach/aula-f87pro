@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Four more sound-reactive themes: `blaze` (fire where bass lifts the
+  flames and beats throw sparks), `waterfall` (a scrolling spectrogram),
+  `monsoon` (treble rain and beat ripples on dark water) and `core` (a
+  reactor core on a spinning colour wheel; bass sizes it, beats turn the
+  wheel and fire coloured shockwaves).
+- `sound.AudioTheme`, the shared base for sound themes: it owns the audio
+  queue, the spectrum tracker and the idle-to-music hand-over.
 - `pulse` theme: an equalizer driven by the Mac's sound output, captured
   through a small ScreenCaptureKit helper (`audio_tap.swift`). Bars adjust to
   the track's volume, bass beats send rings and shift the colours, and with
@@ -21,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Theme.on_key_press(row, column)` hook, called under `--reactive`.
 
 ### Changed
+- `pulse` now builds on `AudioTheme`; it behaves the same as before.
+- The fire palette and spark physics from `forge` are now shared helpers
+  (`FIRE_RAMP`, `move_sparks`, `add_spark_light`) in `simulation.py`.
 - The theme contract and colour helpers moved to `theme_base.py`. `themes.py`
   re-exports them, so existing imports still work.
 
