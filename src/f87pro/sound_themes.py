@@ -14,7 +14,6 @@ from .layout import BOARD_WIDTH_UNITS, PIXEL_COLUMNS, physical_x
 from .simulation import FIRE_RAMP, _mix, _Spark, add_spark_light, move_sparks
 from .sound import (
     BASS_BANDS,
-    MID_BANDS,
     TREBLE_BANDS,
     AudioTheme,
     _add_light,
@@ -431,23 +430,25 @@ class CoreTheme(AudioTheme):
     """
     A reactor core in the middle of the board, in every colour at once.
 
-    The music is drawn in circles rather than bars. Bass sets the size of the
-    white-hot core, the mids light a ring around it, and treble flickers at
-    the rim of the board. Each of those layers has its own hue, and the whole
-    board sits on a colour wheel laid around the centre, so every direction
-    out from the core is a different colour.
+    The whole spectrum is drawn in circles. Bass sets the size of the
+    white-hot core, and around it every band of the song flares out in its
+    own direction: bass straight down toward the spacebar, mids out to the
+    sides, treble up to the function row, mirrored left and right. Each
+    direction reaches as far as its band is loud, so vocals, synths and hats
+    all move the picture, not just the kick.
 
-    The wheel is what moves with the song: it spins steadily, every beat
-    turns it a step and fires a shockwave in a fresh colour, and a loud
-    stretch heats the reactor, which spins the wheel faster, brightens the
-    board and burns the core whiter. Quiet music lets it cool and slow.
+    Any sudden rise anywhere in the spectrum (a kick, a snare, a clap, a
+    vocal entry) flashes the board and punches the core, and the biggest
+    hits fire a shockwave. Bass beats also turn the colour wheel a step.
+    Loudness heats the reactor within a second or so, which spins the wheel
+    faster, brightens the board and burns the core whiter.
 
-    In silence the core breathes slowly and the wheel drifts, with a
-    shockwave every few seconds.
+    In silence the core breathes, a phantom spectrum sways around it, and a
+    shockwave goes out every few seconds.
     """
 
     name = "core"
-    description = "Reactor core in a spinning colour wheel: bass sizes the core, beats fire shockwaves"
+    description = "Reactor core whose flares follow the whole spectrum; every hit flashes and fires shockwaves"
 
     _CENTER_X = BOARD_WIDTH_UNITS / 2
     _CENTER_ROW = _BOTTOM_ROW / 2
@@ -462,20 +463,19 @@ class CoreTheme(AudioTheme):
     _HUE_AROUND = 1.0
     #: Extra hue from the core out to the rim, bending the wheel into a swirl.
     _HUE_OUTWARD = 0.3
-    #: Offsets of each layer from the wheel under it, so the core, the ring
-    #: and the rim never share a colour.
-    _RING_HUE_OFFSET = 0.33
-    _RIM_HUE_OFFSET = 0.62
+    #: Offsets from the wheel under them, so flares and shockwaves never
+    #: share the backdrop's colour.
+    _FLARE_HUE_OFFSET = 0.33
     _SHOCK_HUE_OFFSET = 0.5
     _BEAT_HUE_STEP = 0.09
     #: Wheel turns per second, idle and with the reactor fully hot.
     _IDLE_SPIN = 0.04
-    _HOT_SPIN = 0.22
+    _HOT_SPIN = 0.3
 
     #: Brightness of the wheel behind everything, cool and hot. Kept well
     #: lit so every key shows its colour, not just the lit shapes.
-    _BACKDROP_COOL = 0.4
-    _BACKDROP_HOT = 0.55
+    _BACKDROP_COOL = 0.35
+    _BACKDROP_HOT = 0.5
     _BACKDROP_SATURATION = 0.9
     #: How white the centre of the core burns, cool and hot.
     _CORE_WHITEN_COOL = 0.35
@@ -485,12 +485,27 @@ class CoreTheme(AudioTheme):
     _CORE_MIN = 0.08
     _CORE_RANGE = 0.25
     _CORE_EDGE = 0.1
-    _RING_RADIUS = 0.55
-    _RING_WIDTH = 0.1
-    _RING_STRENGTH = 0.85
-    _RIM_START = 0.7
-    _RIM_STRENGTH = 0.8
-    _RIM_FLICKER_SPEED = 19.0
+
+    #: Flares are measured to the board's edge in their own direction (1.0),
+    #: so a loud treble band reaches the top row as surely as the mids reach
+    #: the sides. A full band overshoots a little so it can touch the edge.
+    _FLARE_REACH = 1.15
+    _FLARE_EDGE = 0.18
+    _FLARE_STRENGTH = 0.9
+    _FLARE_TIP_WHITENING = 0.45
+    _FLARE_TIP_WIDTH = 0.12
+    #: Below 1.0 lifts quiet bands, so soft parts of a mix still flare out.
+    _FLARE_CURVE = 0.6
+
+    #: A "hit" is the summed rise of every band since the last step, so a
+    #: snare or a vocal entry counts as much as a kick.
+    _HIT_GAIN = 4.0
+    _HIT_DECAY_TIME = 0.12
+    _HIT_BACKDROP = 0.35
+    _HIT_CORE = 0.12
+    #: A hit this strong (after gain) fires a shockwave of its own.
+    _HIT_SHOCK_THRESHOLD = 0.6
+    _HIT_SHOCK_REFRACTORY = 0.15
 
     _KICK_CORE = 0.08
     _KICK_DECAY_TIME = 0.15
@@ -501,8 +516,9 @@ class CoreTheme(AudioTheme):
     _SHOCK_SATURATION = 0.6
     _MAX_SHOCKS = 8
 
-    #: Seconds for the reactor's temperature to follow loudness.
-    _HEAT_TIME = 3.0
+    #: Seconds for the reactor's temperature to follow loudness. Short, so
+    #: a drop or a breakdown shows within a beat or two.
+    _HEAT_TIME = 0.8
     _IDLE_TEMPERATURE = 0.15
     _IDLE_SHOCK_PERIOD = 3.2
 
@@ -516,6 +532,9 @@ class CoreTheme(AudioTheme):
         self._shocks: List[_Wave] = []
         self._presses: List[_Wave] = []
         self._kick = 0.0
+        self._hit = 0.0
+        self._since_hit_shock = math.inf
+        self._previous_levels = list(self._levels)
         self._temperature = self._IDLE_TEMPERATURE
         self._hue = 0.0
         self._next_idle_shock = self._IDLE_SHOCK_PERIOD
@@ -529,6 +548,7 @@ class CoreTheme(AudioTheme):
         if self._tracker.take_beat():
             self._hue += self._BEAT_HUE_STEP
             self._fire_shock()
+        self._track_hits(dt)
         if now >= self._next_idle_shock:
             self._next_idle_shock = now + self._IDLE_SHOCK_PERIOD
             if self.presence < 0.5:
@@ -543,6 +563,19 @@ class CoreTheme(AudioTheme):
             wave.age += dt
         self._shocks = [shock for shock in self._shocks if shock.age < self._SHOCK_LIFETIME]
         self._presses = [press for press in self._presses if press.age < self._PRESS_FLASH_LIFETIME]
+
+    def _track_hits(self, dt: float) -> None:
+        """Turn a sudden rise anywhere in the spectrum into a flash."""
+        rise = sum(max(0.0, level - previous)
+                   for level, previous in zip(self._levels, self._previous_levels))
+        self._previous_levels = list(self._levels)
+        hit = min(1.0, rise / len(self._levels) * self._HIT_GAIN) * self.presence
+
+        self._hit = max(hit, self._hit * math.exp(-dt / self._HIT_DECAY_TIME))
+        self._since_hit_shock += dt
+        if hit >= self._HIT_SHOCK_THRESHOLD and self._since_hit_shock >= self._HIT_SHOCK_REFRACTORY:
+            self._since_hit_shock = 0.0
+            self._fire_shock()
 
     def _fire_shock(self) -> None:
         self._kick = 1.0
@@ -561,12 +594,11 @@ class CoreTheme(AudioTheme):
         heat = self._temperature
 
         backdrop = self._BACKDROP_COOL + (self._BACKDROP_HOT - self._BACKDROP_COOL) * heat
+        backdrop = min(1.0, backdrop + self._HIT_BACKDROP * self._hit)
         color = scale_brightness(_hue_color(wheel, self._BACKDROP_SATURATION), backdrop)
 
-        core, ring, rim = self._layers(row, column, radius, elapsed)
-        color = _add_light(color, self._core_color(wheel, radius), core)
-        color = _add_light(color, _hue_color(wheel + self._RING_HUE_OFFSET), ring)
-        color = _add_light(color, _hue_color(wheel + self._RIM_HUE_OFFSET), rim)
+        color = self._add_flare(color, wheel, key_x, row, elapsed)
+        color = _add_light(color, self._core_color(wheel, radius), self._core_light(radius, elapsed))
 
         for shock in self._shocks:
             offset = (radius - shock.age * self._SHOCK_SPEED) / self._SHOCK_WIDTH
@@ -580,20 +612,36 @@ class CoreTheme(AudioTheme):
                 color = _add_light(color, _hue_color(wheel + 0.5, self._PRESS_SATURATION), amount)
         return color
 
-    def _layers(self, row: int, column: int, radius: float, elapsed: float):
-        """How lit the core, the mid ring and the rim are at `radius`, 0-1 each."""
+    def _core_light(self, radius: float, elapsed: float) -> float:
+        """How lit the core is at `radius`, 0-1: bass and every hit size it."""
         bass = self._with_music(0.35 + 0.25 * math.sin(elapsed * 1.5), self._band_mean(BASS_BANDS))
-        mids = self._with_music(0.4 + 0.2 * math.sin(elapsed * 0.8 + 1.0), self._band_mean(MID_BANDS))
-        treble = self._with_music(0.15, self._band_mean(TREBLE_BANDS))
-
-        core_size = self._CORE_MIN + self._CORE_RANGE * bass + self._KICK_CORE * self._kick
+        core_size = (self._CORE_MIN + self._CORE_RANGE * bass
+                     + self._KICK_CORE * self._kick + self._HIT_CORE * self._hit)
         outside = max(0.0, radius - core_size) / self._CORE_EDGE
-        core = math.exp(-outside * outside)
-        ring = mids * self._RING_STRENGTH * math.exp(-((radius - self._RING_RADIUS) / self._RING_WIDTH) ** 2)
-        flicker = 0.5 + 0.5 * math.sin(elapsed * self._RIM_FLICKER_SPEED
-                                       + _stable_jitter(row, column) * 40.0)
-        rim = treble * self._RIM_STRENGTH * flicker * _clamp((radius - self._RIM_START) / (1 - self._RIM_START))
-        return core, ring, rim
+        return math.exp(-outside * outside)
+
+    def _add_flare(self, color: RGB, wheel: float, key_x: float, row: int, elapsed: float) -> RGB:
+        """
+        Light the key under the flare for its direction's band: bass straight
+        down, mids to the sides, treble straight up, mirrored left and right.
+        """
+        across = (key_x - self._CENTER_X) / (BOARD_WIDTH_UNITS / 2)
+        down = (row - self._CENTER_ROW) / (_BOTTOM_ROW / 2)
+        reach_used = math.hypot(across, down)
+        spectrum = math.atan2(abs(across), down) / math.pi
+
+        phantom = (0.45 + 0.2 * math.sin(elapsed * 1.1 + spectrum * 5.0)
+                   + 0.12 * math.sin(elapsed * 2.7 - spectrum * 11.0))
+        level = self._with_music(phantom, self._band_at(spectrum) ** self._FLARE_CURVE)
+        reach = level * self._FLARE_REACH
+
+        fill = _clamp((reach - reach_used) / self._FLARE_EDGE + 0.5)
+        if fill <= 0.0:
+            return color
+        flare = _hue_color(wheel + self._FLARE_HUE_OFFSET)
+        tip = math.exp(-((reach_used - reach) / self._FLARE_TIP_WIDTH) ** 2)
+        flare = _mix(flare, _WHITE, tip * self._FLARE_TIP_WHITENING)
+        return _add_light(color, flare, fill * self._FLARE_STRENGTH)
 
     def _core_color(self, wheel: float, radius: float) -> RGB:
         """The core takes the wheel's colour, burning whiter toward the centre."""
