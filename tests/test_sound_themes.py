@@ -163,3 +163,27 @@ def test_core_beats_turn_the_colour_wheel():
     hue = theme._hue
     _feed(theme, _levels(0.3, bass=0.6, rest=0.1), elapsed, WINDOW * 2)
     assert theme._hue >= hue + CoreTheme._BEAT_HUE_STEP
+
+
+@pytest.mark.parametrize("band_range", (range(3, 8), range(8, BAND_COUNT)))
+def test_core_reacts_to_mids_and_treble_not_just_bass(band_range):
+    def frame_after(level):
+        theme = CoreTheme()
+        bands = tuple(level if index in band_range else 0.05 for index in range(BAND_COUNT))
+        elapsed = _feed(theme, _levels(0.3), 0.0, 2.0)
+        elapsed = _feed(theme, AudioLevels(0.3, bands), elapsed, 0.5)
+        return _brightness(_frame(theme, elapsed))
+    assert frame_after(0.6) > frame_after(0.05) * 1.1
+
+
+def test_core_fires_a_shockwave_on_a_snare_without_bass():
+    theme = CoreTheme()
+    quiet = AudioLevels(0.1, (0.02,) * 3 + (0.03,) * (BAND_COUNT - 3))
+    snare = AudioLevels(0.3, (0.02,) * 3 + (0.5,) * (BAND_COUNT - 3))
+    elapsed = _feed(theme, snare, 0.0, 2.0)
+    elapsed = _feed(theme, quiet, elapsed, 0.5)
+    theme._shocks.clear()
+    while theme._tracker.take_beat():
+        pass
+    _feed(theme, snare, elapsed, WINDOW * 3)
+    assert theme._shocks

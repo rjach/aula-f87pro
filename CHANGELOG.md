@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Four more sound-reactive themes: `blaze` (fire where bass lifts the
   flames and beats throw sparks), `waterfall` (a scrolling spectrogram),
   `monsoon` (treble rain and beat ripples on dark water) and `core` (a
-  reactor core on a spinning colour wheel; bass sizes it, beats turn the
-  wheel and fire coloured shockwaves).
+  reactor core on a spinning colour wheel; every band flares out in its own
+  direction, and any hit in the mix, not just the kick, flashes the board
+  and fires coloured shockwaves).
 - `sound.AudioTheme`, the shared base for sound themes: it owns the audio
   queue, the spectrum tracker and the idle-to-music hand-over.
 - `pulse` theme: an equalizer driven by the Mac's sound output, captured
